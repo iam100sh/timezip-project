@@ -102,6 +102,15 @@
     #results .name { font-weight: 600; }
     #results .addr, #results .phone { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
     #results .message { color: var(--muted); cursor: default; }
+    #results .dist { font-size: 0.85rem; color: var(--accent); margin-top: 2px; }
+    #results .summary {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 0.85rem; color: var(--muted); background: var(--bg); cursor: default;
+    }
+    #results .summary button {
+      flex-shrink: 0; padding: 4px 10px; font-size: 0.8rem;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer;
+    }
 
     /* 가게 정보 말풍선 (말풍선 바탕이 항상 흰색이라 색을 고정해요) */
     .place-card { padding: 10px 12px; font-size: 13px; line-height: 1.5; color: #1f1f1f; width: 240px; white-space: normal; }
@@ -172,6 +181,11 @@
     });
 
     var infowindow = new kakao.maps.InfoWindow({ zIndex: 1 }); // 마커를 누르면 뜨는 말풍선
+    var myPosition = null; // 내 위치 버튼으로 찾은 위치 (찾기 전에는 null)
+    var searchCircle = new kakao.maps.Circle({ // 내 주변 검색 반경을 점선 원으로
+      strokeWeight: 2, strokeColor: '#2f6fed', strokeOpacity: 0.6, strokeStyle: 'dash',
+      fillColor: '#2f6fed', fillOpacity: 0.04
+    });
     var markers = [];
     var resultList = document.getElementById('results');
 
@@ -183,22 +197,40 @@
       search(keyword);
     });
 
-    function search(keyword) {
-      // 1) 먼저 장소 검색을 해 봐요 (예: "석계역 카페")
-      // 한 번에 15개씩 오기 때문에, 다음 페이지가 있으면 끝까지(최대 45개) 받아서 모아요
-      var found = [];
-      places.keywordSearch(keyword, function (data, status, pagination) {
-        if (status === kakao.maps.services.Status.OK) {
-          found = found.concat(data);
-          if (pagination.hasNextPage) {
-            pagination.nextPage(); // 다음 페이지 결과도 이 함수로 다시 들어와요
-          } else {
-            showPlaces(found);
-          }
-          return;
+    // 내 위치를 알고 있으면 내 주변에서, 모르면 전체 지역에서 검색해요
+    function search(keyword, everywhere) {
+      if (myPosition && !everywhere) {
+        searchNearMe(keyword, 0);
+      } else {
+        searchEverywhere(keyword);
+      }
+    }
+
+    // 내 주변 검색: 500m 안에서 찾고, 결과가 5곳보다 적으면 1km → 2km로 넓혀요
+    var RADIUS_STEPS = [500, 1000, 2000]; // 미터 (500m는 걸어서 7~8분)
+    var MIN_RESULTS = 5;
+
+    function searchNearMe(keyword, step) {
+      var radius = RADIUS_STEPS[step];
+      var isLastStep = step === RADIUS_STEPS.length - 1;
+      var options = { location: myPosition, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE }; // 가까운 순
+
+      fetchAllPages(keyword, options, function (found) {
+        if (found.length >= MIN_RESULTS || (isLastStep && found.length > 0)) {
+          showPlaces(found, { keyword: keyword, radius: radius });
+        } else if (!isLastStep) {
+          searchNearMe(keyword, step + 1);
+        } else {
+          searchEverywhere(keyword, '내 위치 ' + formatDistance(radius) + ' 안에는 없어서 전체 지역에서 찾았어요.');
         }
-        if (found.length > 0) { // 다음 페이지를 받다가 실패하면 받은 데까지만 보여줘요
-          showPlaces(found);
+      });
+    }
+
+    function searchEverywhere(keyword, notice) {
+      // 1) 먼저 장소 검색을 해 봐요 (예: "석계역 카페")
+      fetchAllPages(keyword, {}, function (found) {
+        if (found.length > 0) {
+          showPlaces(found, { notice: notice });
           return;
         }
         // 2) 장소가 없으면 주소로 좌표를 찾아봐요 (예: "서울 노원구 월계동 1")
@@ -206,7 +238,7 @@
           if (status === kakao.maps.services.Status.OK) {
             showPlaces(result.map(function (r) {
               return { place_name: r.address_name, road_address_name: r.road_address ? r.road_address.address_name : '', x: r.x, y: r.y };
-            }));
+            }), {});
           } else {
             clearMarkers();
             showMessage('검색 결과가 없어요. 다른 검색어로 해 보세요.');
@@ -215,19 +247,72 @@
       });
     }
 
+    // 장소 검색은 한 번에 15개씩 오기 때문에, 다음 페이지가 있으면 끝까지(최대 45개) 받아서 모아요
+    function fetchAllPages(keyword, options, done) {
+      var found = [];
+      places.keywordSearch(keyword, function (data, status, pagination) {
+        if (status === kakao.maps.services.Status.OK) {
+          found = found.concat(data);
+          if (pagination.hasNextPage) {
+            pagination.nextPage(); // 다음 페이지 결과도 이 함수로 다시 들어와요
+            return;
+          }
+        }
+        done(found); // 결과가 없거나 다음 페이지를 받다가 실패하면 받은 데까지만
+      }, options);
+    }
+
+    // 거리 표시: 230 → "230m", 1500 → "1.5km"
+    function formatDistance(meters) {
+      return meters < 1000 ? Math.round(meters) + 'm' : (meters / 1000).toFixed(1).replace('.0', '') + 'km';
+    }
+
+    // 도보 시간: 1분에 약 67m (시속 4km)
+    function walkMinutes(meters) {
+      return Math.max(1, Math.round(meters / 67));
+    }
+
     // 검색 결과를 지도에 마커로, 옆에 목록으로 보여주기
-    function showPlaces(list) {
+    function showPlaces(list, info) {
       clearMarkers();
       resultList.innerHTML = '';
       var bounds = new kakao.maps.LatLngBounds(); // 모든 마커가 보이게 지도 범위 맞추기
 
-      list.forEach(function (place) {
+      if (info.radius) {
+        // 내 주변 검색이면: 목록 맨 위에 안내, 지도에 검색 반경 원 표시
+        var summary = document.createElement('li');
+        summary.className = 'summary';
+        summary.textContent = '내 위치 ' + formatDistance(info.radius) + ' 안 · ' + list.length + '곳 · 가까운 순';
+        var everywhereButton = document.createElement('button');
+        everywhereButton.type = 'button';
+        everywhereButton.textContent = '전체 지역에서 검색';
+        everywhereButton.addEventListener('click', function () { search(info.keyword, true); });
+        summary.appendChild(everywhereButton);
+        resultList.appendChild(summary);
+
+        searchCircle.setPosition(myPosition);
+        searchCircle.setRadius(info.radius);
+        searchCircle.setMap(map);
+        var circleBounds = searchCircle.getBounds(); // 반경 원 전체가 보이게
+        bounds.extend(circleBounds.getSouthWest());
+        bounds.extend(circleBounds.getNorthEast());
+      } else if (info.notice) {
+        var notice = document.createElement('li');
+        notice.className = 'summary';
+        notice.textContent = info.notice;
+        resultList.appendChild(notice);
+      }
+
+      list.forEach(function (place, index) {
         var position = new kakao.maps.LatLng(place.y, place.x);
         var marker = new kakao.maps.Marker({ position: position }); // 지도 대신 clusterer에 넣어요
         bounds.extend(position);
 
         var item = document.createElement('li');
         addLine(item, 'name', place.place_name);
+        if (info.radius && place.distance) {
+          addLine(item, 'dist', (index === 0 ? '가장 가까워요 · ' : '') + formatDistance(Number(place.distance)) + ' · 도보 ' + walkMinutes(Number(place.distance)) + '분');
+        }
         addLine(item, 'addr', place.road_address_name || place.address_name);
         addLine(item, 'phone', place.phone);
         resultList.appendChild(item);
@@ -271,6 +356,7 @@
       clusterer.clear();
       markers = [];
       clickMarker.setMap(null);
+      searchCircle.setMap(null);
       infowindow.close();
     }
 
@@ -428,6 +514,10 @@
       navigator.geolocation.getCurrentPosition(function (pos) {
         myLocationButton.classList.remove('loading');
         var here = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        myPosition = here; // 이제부터 검색은 내 주변에서 해요
+        var keywordInput = document.getElementById('keyword');
+        keywordInput.placeholder = '내 주변 검색 (예: 카페)';
+        if (keywordInput.value === '석계역 카페') keywordInput.value = '카페';
 
         myDot.setPosition(here);
         myDot.setMap(map);
