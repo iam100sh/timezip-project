@@ -222,16 +222,35 @@
         return;
       }
 
-      // coord2Address는 (경도, 위도) 순서예요
-      geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function (result, status) {
-        if (status !== kakao.maps.services.Status.OK) return;
+      var thisClick = ++clickCount; // 빠르게 여러 번 누르면 마지막 클릭 결과만 보여줘요
+
+      // 주소 찾기와 근처 가게 찾기를 동시에 하고, 둘 다 끝나면 말풍선에 보여줘요
+      Promise.all([getAddress(latlng), findNearbyPlaces(latlng)]).then(function (answers) {
+        if (thisClick !== clickCount) return;
+        var address = answers[0];
+        var nearby = answers[1];
+        if (!address && nearby.length === 0) return;
 
         var box = document.createElement('div');
         box.style.cssText = 'padding:8px 10px;font-size:13px;color:#1f1f1f;line-height:1.5;white-space:nowrap;';
-        if (result[0].road_address) {
-          addLine(box, 'road', '도로명: ' + result[0].road_address.address_name);
+
+        if (nearby.length > 0) {
+          var title = document.createElement('div');
+          title.style.cssText = 'font-weight:600;font-size:14px;';
+          title.textContent = nearby[0].place_name;
+          box.appendChild(title);
+          var others = nearby.slice(1).map(function (p) { return p.place_name + ' ' + p.distance + 'm'; });
+          if (others.length > 0) {
+            var more = document.createElement('div');
+            more.style.cssText = 'color:#6b6b6b;margin-bottom:4px;';
+            more.textContent = '근처: ' + others.join(', ');
+            box.appendChild(more);
+          }
         }
-        addLine(box, 'jibun', '지번: ' + result[0].address.address_name);
+        if (address) {
+          if (address.road_address) addLine(box, 'road', '도로명: ' + address.road_address.address_name);
+          addLine(box, 'jibun', '지번: ' + address.address.address_name);
+        }
 
         clickMarker.setPosition(latlng);
         clickMarker.setMap(map);
@@ -239,6 +258,40 @@
         infowindow.open(map, clickMarker);
       });
     });
+
+    var clickCount = 0;
+
+    // 좌표 → 주소 (coord2Address는 (경도, 위도) 순서예요)
+    function getAddress(latlng) {
+      return new Promise(function (resolve) {
+        geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function (result, status) {
+          resolve(status === kakao.maps.services.Status.OK ? result[0] : null);
+        });
+      });
+    }
+
+    // 클릭한 자리 주변(30m)의 가게 찾기
+    // 지도에 그려진 주황색 아이콘은 코드로 알 수 없어서, 카테고리별로 주변 장소를 검색해 가장 가까운 곳을 골라요
+    var CATEGORIES = [
+      'MT1', 'CS2', 'PS3', 'SC4', 'AC5', 'PK6', 'OL7', 'SW8', 'BK9', // 마트 편의점 어린이집 학교 학원 주차장 주유소 지하철역 은행
+      'CT1', 'AG2', 'PO3', 'AT4', 'AD5', 'FD6', 'CE7', 'HP8', 'PM9'  // 문화시설 중개업소 공공기관 관광명소 숙박 음식점 카페 병원 약국
+    ];
+    var NEARBY_RADIUS = 30; // 미터
+
+    function findNearbyPlaces(latlng) {
+      var searches = CATEGORIES.map(function (code) {
+        return new Promise(function (resolve) {
+          places.categorySearch(code, function (data, status) {
+            resolve(status === kakao.maps.services.Status.OK ? data : []);
+          }, { location: latlng, radius: NEARBY_RADIUS, sort: kakao.maps.services.SortBy.DISTANCE });
+        });
+      });
+      return Promise.all(searches).then(function (lists) {
+        var all = [].concat.apply([], lists);
+        all.sort(function (a, b) { return Number(a.distance) - Number(b.distance); });
+        return all.slice(0, 3); // 가장 가까운 3곳
+      });
+    }
 
     // 클릭한 자리가 가게 마커 그림 위인지 확인 (화면 픽셀 거리로 비교)
     function findMarkerAt(latlng) {
