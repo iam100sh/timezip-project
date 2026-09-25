@@ -105,8 +105,8 @@
     <ul id="results"></ul>
   </main>
 
-  <!-- Javascript API 불러오기 + services 라이브러리 (&libraries=services) -->
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150&libraries=services"></script>
+  <!-- Javascript API 불러오기 + services, clusterer 라이브러리 (&libraries=services,clusterer) -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150&libraries=services,clusterer"></script>
 
   <script>
     // 지도 만들기 (석계역 중심)
@@ -118,6 +118,15 @@
     // services 라이브러리의 두 가지 기능
     var places = new kakao.maps.services.Places();     // 장소 검색 (키워드 → 장소 목록)
     var geocoder = new kakao.maps.services.Geocoder(); // 주소-좌표 변환 (주소 → 좌표)
+
+    // clusterer 라이브러리: 가까운 마커끼리 숫자 동그라미로 묶어줘요
+    var CLUSTER_MIN_LEVEL = 5; // 지도 레벨이 5 이상(더 축소)일 때부터 묶어요
+    var clusterer = new kakao.maps.MarkerClusterer({
+      map: map,
+      averageCenter: true,           // 동그라미를 묶인 마커들의 가운데에 놓기
+      minLevel: CLUSTER_MIN_LEVEL,
+      disableClickZoom: false        // 동그라미를 누르면 그 지역으로 확대
+    });
 
     var infowindow = new kakao.maps.InfoWindow({ zIndex: 1 }); // 마커를 누르면 뜨는 말풍선
     var markers = [];
@@ -133,9 +142,20 @@
 
     function search(keyword) {
       // 1) 먼저 장소 검색을 해 봐요 (예: "석계역 카페")
-      places.keywordSearch(keyword, function (data, status) {
+      // 한 번에 15개씩 오기 때문에, 다음 페이지가 있으면 끝까지(최대 45개) 받아서 모아요
+      var found = [];
+      places.keywordSearch(keyword, function (data, status, pagination) {
         if (status === kakao.maps.services.Status.OK) {
-          showPlaces(data);
+          found = found.concat(data);
+          if (pagination.hasNextPage) {
+            pagination.nextPage(); // 다음 페이지 결과도 이 함수로 다시 들어와요
+          } else {
+            showPlaces(found);
+          }
+          return;
+        }
+        if (found.length > 0) { // 다음 페이지를 받다가 실패하면 받은 데까지만 보여줘요
+          showPlaces(found);
           return;
         }
         // 2) 장소가 없으면 주소로 좌표를 찾아봐요 (예: "서울 노원구 월계동 1")
@@ -160,7 +180,7 @@
 
       list.forEach(function (place) {
         var position = new kakao.maps.LatLng(place.y, place.x);
-        var marker = new kakao.maps.Marker({ map: map, position: position });
+        var marker = new kakao.maps.Marker({ position: position }); // 지도 대신 clusterer에 넣어요
         bounds.extend(position);
 
         var item = document.createElement('li');
@@ -170,6 +190,10 @@
         resultList.appendChild(item);
 
         function focus() {
+          // 묶여 있는 마커면 동그라미가 풀리도록 확대한 뒤 보여줘요
+          if (map.getLevel() >= CLUSTER_MIN_LEVEL) {
+            map.setLevel(CLUSTER_MIN_LEVEL - 1, { anchor: position });
+          }
           map.panTo(position);
           var box = document.createElement('div');
           box.style.cssText = 'padding:6px 10px;font-size:13px;color:#1f1f1f;white-space:nowrap;';
@@ -181,6 +205,8 @@
         item.addEventListener('click', focus);
         markers.push({ marker: marker, focus: focus });
       });
+
+      clusterer.addMarkers(markers.map(function (m) { return m.marker; }));
 
       map.setBounds(bounds);
     }
@@ -202,7 +228,7 @@
     }
 
     function clearMarkers() {
-      markers.forEach(function (m) { m.marker.setMap(null); });
+      clusterer.clear();
       markers = [];
       clickMarker.setMap(null);
       infowindow.close();
@@ -298,6 +324,7 @@
       var projection = map.getProjection();
       var click = projection.containerPointFromCoords(latlng);
       for (var i = 0; i < markers.length; i++) {
+        if (!markers[i].marker.getMap()) continue; // 동그라미 안에 묶여서 안 보이는 마커는 빼요
         var point = projection.containerPointFromCoords(markers[i].marker.getPosition());
         var dx = click.x - point.x;
         var dy = click.y - point.y; // 마커 그림은 좌표보다 위쪽에 그려져요
