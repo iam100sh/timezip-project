@@ -7,17 +7,23 @@
   <style>
     :root {
       --bg: #f7f7f5;
+      --surface: #ffffff;
       --text: #1f1f1f;
+      --muted: #6b6b6b;
+      --line: #e3e3e0;
       --accent: #2f6fed;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #161616;
+        --surface: #202020;
         --text: #f0f0f0;
+        --muted: #a0a0a0;
+        --line: #333333;
         --accent: #6f9bff;
       }
     }
-    * { box-sizing: border-box; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
       display: flex;
@@ -26,33 +32,180 @@
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
     }
-    header { padding: 12px 16px; }
-    h1 { font-size: 1.5rem; letter-spacing: -0.03em; }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+    }
+    h1 { font-size: 1.5rem; letter-spacing: -0.03em; flex-shrink: 0; }
     h1 span { color: var(--accent); }
-    /* 1단계: 지도를 담을 영역 (화면 크기에 맞춰 꽉 채움) */
-    #map { flex: 1; width: 100%; }
+
+    /* 검색창 */
+    #search-form { display: flex; gap: 6px; flex: 1; max-width: 480px; }
+    #keyword {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 12px;
+      font-size: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+    }
+    #search-form button {
+      padding: 8px 14px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+    }
+
+    /* 지도 + 검색 결과 목록 */
+    main { flex: 1; display: flex; min-height: 0; }
+    #map { flex: 1; }
+    #results {
+      width: 320px;
+      overflow-y: auto;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      list-style: none;
+    }
+    #results:empty { display: none; }
+    #results li {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    #results li:hover { background: var(--bg); }
+    #results .name { font-weight: 600; }
+    #results .addr, #results .phone { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+    #results .message { color: var(--muted); cursor: default; }
+
+    /* 휴대폰: 목록을 지도 아래로 */
+    @media (max-width: 700px) {
+      main { flex-direction: column; }
+      #results { width: 100%; max-height: 40%; border-left: none; border-top: 1px solid var(--line); }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>time<span>zip</span></h1>
+    <form id="search-form">
+      <input id="keyword" type="search" placeholder="장소나 주소 검색 (예: 석계역 카페)" value="석계역 카페">
+      <button type="submit">검색</button>
+    </form>
   </header>
 
-  <!-- 1단계: 지도를 담을 영역 만들기 -->
-  <div id="map"></div>
+  <main>
+    <div id="map"></div>
+    <ul id="results"></ul>
+  </main>
 
-  <!-- 2단계: 실제 지도를 그리는 Javascript API 불러오기 -->
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150"></script>
+  <!-- Javascript API 불러오기 + services 라이브러리 (&libraries=services) -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150&libraries=services"></script>
 
-  <!-- 3단계: 지도를 띄우는 코드 작성 -->
   <script>
-    var container = document.getElementById('map'); // 지도를 담을 영역
-    var options = {
-      center: new kakao.maps.LatLng(37.614829, 127.065526), // 지도의 중심좌표 (석계역)
-      level: 3 // 지도의 확대 레벨 (숫자가 작을수록 확대)
-    };
+    // 지도 만들기 (석계역 중심)
+    var map = new kakao.maps.Map(document.getElementById('map'), {
+      center: new kakao.maps.LatLng(37.614829, 127.065526),
+      level: 3
+    });
 
-    var map = new kakao.maps.Map(container, options); // 지도 생성
+    // services 라이브러리의 두 가지 기능
+    var places = new kakao.maps.services.Places();     // 장소 검색 (키워드 → 장소 목록)
+    var geocoder = new kakao.maps.services.Geocoder(); // 주소-좌표 변환 (주소 → 좌표)
+
+    var infowindow = new kakao.maps.InfoWindow({ zIndex: 1 }); // 마커를 누르면 뜨는 말풍선
+    var markers = [];
+    var resultList = document.getElementById('results');
+
+    // 검색 버튼을 누르면 실행
+    document.getElementById('search-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var keyword = document.getElementById('keyword').value.trim();
+      if (!keyword) return;
+      search(keyword);
+    });
+
+    function search(keyword) {
+      // 1) 먼저 장소 검색을 해 봐요 (예: "석계역 카페")
+      places.keywordSearch(keyword, function (data, status) {
+        if (status === kakao.maps.services.Status.OK) {
+          showPlaces(data);
+          return;
+        }
+        // 2) 장소가 없으면 주소로 좌표를 찾아봐요 (예: "서울 노원구 월계동 1")
+        geocoder.addressSearch(keyword, function (result, status) {
+          if (status === kakao.maps.services.Status.OK) {
+            showPlaces(result.map(function (r) {
+              return { place_name: r.address_name, road_address_name: r.road_address ? r.road_address.address_name : '', x: r.x, y: r.y };
+            }));
+          } else {
+            clearMarkers();
+            showMessage('검색 결과가 없어요. 다른 검색어로 해 보세요.');
+          }
+        });
+      });
+    }
+
+    // 검색 결과를 지도에 마커로, 옆에 목록으로 보여주기
+    function showPlaces(list) {
+      clearMarkers();
+      resultList.innerHTML = '';
+      var bounds = new kakao.maps.LatLngBounds(); // 모든 마커가 보이게 지도 범위 맞추기
+
+      list.forEach(function (place) {
+        var position = new kakao.maps.LatLng(place.y, place.x);
+        var marker = new kakao.maps.Marker({ map: map, position: position });
+        markers.push(marker);
+        bounds.extend(position);
+
+        var item = document.createElement('li');
+        addLine(item, 'name', place.place_name);
+        addLine(item, 'addr', place.road_address_name || place.address_name);
+        addLine(item, 'phone', place.phone);
+        resultList.appendChild(item);
+
+        function focus() {
+          map.panTo(position);
+          var box = document.createElement('div');
+          box.style.cssText = 'padding:6px 10px;font-size:13px;color:#1f1f1f;white-space:nowrap;';
+          box.textContent = place.place_name;
+          infowindow.setContent(box);
+          infowindow.open(map, marker);
+        }
+        kakao.maps.event.addListener(marker, 'click', focus);
+        item.addEventListener('click', focus);
+      });
+
+      map.setBounds(bounds);
+    }
+
+    function addLine(parent, className, text) {
+      if (!text) return;
+      var div = document.createElement('div');
+      div.className = className;
+      div.textContent = text;
+      parent.appendChild(div);
+    }
+
+    function showMessage(text) {
+      resultList.innerHTML = '';
+      var item = document.createElement('li');
+      item.className = 'message';
+      item.textContent = text;
+      resultList.appendChild(item);
+    }
+
+    function clearMarkers() {
+      markers.forEach(function (m) { m.setMap(null); });
+      markers = [];
+      infowindow.close();
+    }
   </script>
 </body>
 </html>
