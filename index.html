@@ -88,8 +88,24 @@
       display: flex; align-items: center; justify-content: center; cursor: pointer;
     }
     #bus-toggle.on { background: #0068b7; color: #fff; border-color: #0068b7; }
+    /* 카페, 음식점, 편의점 버튼 줄 (지도 위쪽) */
+    #category-chips {
+      position: absolute; left: 0; right: 0; top: 10px; z-index: 2;
+      display: flex; gap: 6px; padding: 0 12px; overflow-x: auto; scrollbar-width: none;
+      pointer-events: none; /* 버튼 사이 빈 곳은 지도를 그대로 누를 수 있게 */
+    }
+    #category-chips::-webkit-scrollbar { display: none; }
+    #category-chips button {
+      pointer-events: auto; flex-shrink: 0;
+      display: flex; align-items: center; gap: 4px;
+      padding: 7px 12px; border-radius: 18px; font-size: 14px;
+      border: 1px solid var(--line); background: var(--surface); color: var(--text);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); cursor: pointer;
+    }
+    #category-chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
     #bus-hint {
-      position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 2;
+      position: absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 2;
       padding: 6px 12px; border-radius: 16px; font-size: 13px;
       background: rgba(0, 0, 0, 0.7); color: #fff; white-space: nowrap;
     }
@@ -187,6 +203,11 @@
   <main>
     <div id="map-wrap">
       <div id="map"></div>
+      <div id="category-chips">
+        <button type="button" data-category="CE7" data-label="카페" aria-pressed="false">☕ 카페</button>
+        <button type="button" data-category="FD6" data-label="음식점" aria-pressed="false">🍴 음식점</button>
+        <button type="button" data-category="CS2" data-label="편의점" aria-pressed="false">🏪 편의점</button>
+      </div>
       <div id="bus-hint" hidden></div>
       <button id="bus-toggle" type="button" title="주변 버스정류장" aria-label="주변 버스정류장 보기" aria-pressed="false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -239,8 +260,39 @@
       e.preventDefault();
       var keyword = document.getElementById('keyword').value.trim();
       if (!keyword) return;
+      setActiveChip(null);
       search(keyword);
     });
+
+    // 카페, 음식점, 편의점 버튼: 내 위치(없으면 지금 보는 지도 가운데) 주변을 카테고리로 찾아요
+    var chipButtons = document.querySelectorAll('#category-chips button');
+    var activeChip = null;
+
+    chipButtons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (activeChip === button) { // 한 번 더 누르면 끄기
+          setActiveChip(null);
+          clearMarkers();
+          resultList.innerHTML = '';
+          return;
+        }
+        setActiveChip(button);
+        var label = button.dataset.label;
+        document.getElementById('keyword').value = label;
+        var anchor = myPosition
+          ? { position: myPosition, label: '내 위치' }
+          : { position: map.getCenter(), label: '지도 가운데' };
+        searchNear({ category: button.dataset.category }, anchor, 0, label);
+      });
+    });
+
+    function setActiveChip(button) {
+      activeChip = button;
+      chipButtons.forEach(function (b) {
+        b.classList.toggle('on', b === button);
+        b.setAttribute('aria-pressed', String(b === button));
+      });
+    }
 
     // 검색 기준 정하기
     //  - "창동역 카페"처럼 지역이 들어 있으면 → 그 지역 기준
@@ -359,9 +411,13 @@
     }
 
     // 장소 검색은 한 번에 15개씩 오기 때문에, 다음 페이지가 있으면 끝까지(최대 45개) 받아서 모아요
-    function fetchAllPages(keyword, options, done) {
+    // query가 글자면 키워드 검색, { category: 'CE7' } 이면 카테고리 검색이에요
+    function fetchAllPages(query, options, done) {
       var found = [];
-      places.keywordSearch(keyword, function (data, status, pagination) {
+      var run = typeof query === 'string'
+        ? function (cb) { places.keywordSearch(query, cb, options); }
+        : function (cb) { places.categorySearch(query.category, cb, options); };
+      run(function (data, status, pagination) {
         if (status === kakao.maps.services.Status.OK) {
           found = found.concat(data);
           if (pagination.hasNextPage) {
@@ -370,7 +426,7 @@
           }
         }
         done(found); // 결과가 없거나 다음 페이지를 받다가 실패하면 받은 데까지만
-      }, options);
+      });
     }
 
     // 거리 표시: 230 → "230m", 1500 → "1.5km"
