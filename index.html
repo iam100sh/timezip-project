@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>timezip</title>
+  <style>
+    :root {
+      --bg: #f7f7f5;
+      --text: #1f1f1f;
+      --muted: #6b6b6b;
+      --accent: #2f6fed;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161616;
+        --text: #f0f0f0;
+        --muted: #a0a0a0;
+        --accent: #6f9bff;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      text-align: center;
+    }
+    h1 { font-size: clamp(2.5rem, 10vw, 4rem); letter-spacing: -0.03em; }
+    h1 span { color: var(--accent); }
+    p { margin-top: 12px; color: var(--muted); font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>time<span>zip</span></h1>
+    <p>곧 찾아올게요. 준비 중입니다.</p>
+  </main>
+</body>
+</html>
