@@ -207,6 +207,9 @@
         <button type="button" data-category="CE7" data-label="카페" aria-pressed="false">☕ 카페</button>
         <button type="button" data-category="FD6" data-label="음식점" aria-pressed="false">🍴 음식점</button>
         <button type="button" data-category="CS2" data-label="편의점" aria-pressed="false">🏪 편의점</button>
+        <button type="button" data-category="PM9,HP8" data-label="약국·병원" aria-pressed="false">💊 약국·병원</button>
+        <button type="button" data-category="OL7" data-label="주유소" aria-pressed="false">⛽ 주유소</button>
+        <button type="button" data-category="PK6" data-label="주차장" aria-pressed="false">🅿️ 주차장</button>
       </div>
       <div id="bus-hint" hidden></div>
       <button id="bus-toggle" type="button" title="주변 버스정류장" aria-label="주변 버스정류장 보기" aria-pressed="false">
@@ -412,7 +415,23 @@
 
     // 장소 검색은 한 번에 15개씩 오기 때문에, 다음 페이지가 있으면 끝까지(최대 45개) 받아서 모아요
     // query가 글자면 키워드 검색, { category: 'CE7' } 이면 카테고리 검색이에요
+    // { category: 'PM9,HP8' } 처럼 여러 개면 각각 찾아서 합친 뒤 가까운 순으로 다시 정렬해요
     function fetchAllPages(query, options, done) {
+      if (typeof query !== 'string' && query.category.indexOf(',') !== -1) {
+        var codes = query.category.split(',');
+        var lists = [];
+        codes.forEach(function (code) {
+          fetchAllPages({ category: code }, options, function (list) {
+            lists.push(list);
+            if (lists.length < codes.length) return; // 다 받을 때까지 기다려요
+            var merged = [].concat.apply([], lists);
+            merged.sort(function (a, b) { return Number(a.distance) - Number(b.distance); });
+            done(merged);
+          });
+        });
+        return;
+      }
+
       var found = [];
       var run = typeof query === 'string'
         ? function (cb) { places.keywordSearch(query, cb, options); }
