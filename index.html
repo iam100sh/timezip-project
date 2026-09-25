@@ -178,9 +178,16 @@
       flex: 1; text-align: center; padding: 5px 0;
       border: 1px solid #d0d7e6; border-radius: 6px; font-size: 12px;
     }
-    .place-card .nearby { margin-top: 8px; padding-top: 6px; border-top: 1px solid #eee; color: #6b6b6b; font-size: 12px; }
-    .place-card .nearby button {
-      border: none; background: none; padding: 0; margin-right: 6px;
+    .place-card .pick-list { display: flex; flex-direction: column; margin-top: 6px; }
+    .place-card .pick-list button {
+      text-align: left; padding: 7px 4px; border: none; border-top: 1px solid #eee;
+      background: none; cursor: pointer; font: inherit; color: #1f1f1f;
+    }
+    .place-card .pick-list button:hover { background: #f5f7fb; }
+    .place-card .pick-name { font-weight: 600; }
+    .place-card .pick-cat { color: #6b6b6b; font-size: 12px; }
+    .place-card .back {
+      margin-top: 8px; padding: 0; border: none; background: none;
       color: #2f6fed; font-size: 12px; cursor: pointer;
     }
 
@@ -589,18 +596,16 @@
     function clearMarkers() {
       clusterer.clear();
       markers = [];
-      clickMarker.setMap(null);
       searchCircle.setMap(null);
       infowindow.close();
     }
 
-    // 지도를 클릭하면 그 자리의 주소 알려주기 (좌표 → 주소)
-    var clickMarker = new kakao.maps.Marker(); // 클릭한 자리에 찍을 마커
-
+    // 지도를 누르면: 지도에 그려진 가게 아이콘이나 이름을 누른 경우에만 그 가게 정보를 보여줘요
+    // 빈 곳을 누르면 아무것도 안 보여주고, 열려 있던 말풍선도 닫아요
     kakao.maps.event.addListener(map, 'click', function (mouseEvent) {
-      var latlng = mouseEvent.latLng; // 클릭한 자리의 좌표
+      var latlng = mouseEvent.latLng; // 누른 자리의 좌표
 
-      // 가게 마커를 누른 거면 주소 대신 가게 이름을 보여줘요
+      // 검색 결과 마커를 누른 거면 그 가게를 보여줘요
       // (휴대폰에서는 마커를 눌러도 지도 클릭이 같이 일어날 수 있어서 직접 확인해요)
       var hit = findMarkerAt(latlng);
       if (hit) {
@@ -608,54 +613,65 @@
         return;
       }
 
+      infowindow.close();
       var thisClick = ++clickCount; // 빠르게 여러 번 누르면 마지막 클릭 결과만 보여줘요
 
-      // 주소 찾기와 근처 가게 찾기를 동시에 하고, 둘 다 끝나면 말풍선에 보여줘요
-      Promise.all([getAddress(latlng), findNearbyPlaces(latlng)]).then(function (answers) {
-        if (thisClick !== clickCount) return;
-        var address = answers[0];
-        var nearby = answers[1];
-        if (!address && nearby.length === 0) return;
-
-        clickMarker.setPosition(latlng);
-        clickMarker.setMap(map);
-
-        if (nearby.length > 0) {
-          showNearbyCard(nearby, 0);
-          return;
-        }
-
-        // 근처에 가게가 없으면 주소만 보여줘요
-        var box = document.createElement('div');
-        box.className = 'place-card';
-        if (address.road_address) addLine(box, 'row', '도로명: ' + address.road_address.address_name);
-        addLine(box, 'row', '지번: ' + address.address.address_name);
-        infowindow.setContent(box);
-        infowindow.open(map, clickMarker);
+      findPlacesAtPoint(latlng).then(function (hits) {
+        if (thisClick !== clickCount || hits.length === 0) return; // 빈 곳이면 아무것도 안 해요
+        showNearbyCard(hits);
       });
     });
 
     var clickCount = 0;
 
-    // 근처 가게 중 하나(index)를 크게 보여주고, 나머지는 눌러서 바꿀 수 있게 해요
-    function showNearbyCard(nearby, index) {
-      var card = buildPlaceCard(nearby[index]);
-      if (nearby.length > 1) {
-        var others = document.createElement('div');
-        others.className = 'nearby';
-        others.appendChild(document.createTextNode('근처: '));
-        nearby.forEach(function (p, i) {
-          if (i === index) return;
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.textContent = p.place_name + ' ' + p.distance + 'm';
-          btn.addEventListener('click', function () { showNearbyCard(nearby, i); });
-          others.appendChild(btn);
-        });
-        card.appendChild(others);
+    // 누른 자리에 가게가 하나면 바로 카드를, 여러 개면(한 건물 등) 고를 수 있는 목록을 보여줘요
+    function showNearbyCard(hits) {
+      var anchor = new kakao.maps.LatLng(hits[0].y, hits[0].x);
+      if (hits.length === 1) {
+        showPlaceCardAt(hits[0], null);
+        return;
       }
-      infowindow.setContent(card);
-      infowindow.open(map, clickMarker);
+      var box = document.createElement('div');
+      box.className = 'place-card';
+      addLine(box, 'category', '이 자리에 있는 곳 ' + hits.length + '곳 · 누른 이름을 골라 주세요');
+      var list = document.createElement('div');
+      list.className = 'pick-list';
+      hits.forEach(function (place) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        addLine(btn, 'pick-name', place.place_name);
+        if (place.category_name) addLine(btn, 'pick-cat', place.category_name.split(' > ').slice(-1)[0]);
+        btn.addEventListener('click', function () { showPlaceCardAt(place, hits); });
+        list.appendChild(btn);
+      });
+      box.appendChild(list);
+      openInfoAt(box, anchor);
+    }
+
+    // 가게 카드를 그 가게 자리에 띄우기 (목록에서 골랐으면 목록으로 돌아가는 버튼도)
+    function showPlaceCardAt(place, hits) {
+      var card = buildPlaceCard(place);
+      if (hits) {
+        var back = document.createElement('button');
+        back.type = 'button';
+        back.className = 'back';
+        back.textContent = '← 이 자리의 다른 곳 보기';
+        back.addEventListener('click', function () { showNearbyCard(hits); });
+        card.appendChild(back);
+      }
+      openInfoAt(card, new kakao.maps.LatLng(place.y, place.x));
+    }
+
+    // 말풍선 열기: 지도 위쪽 버튼 줄에 가려지면 지도를 그만큼 내려서 다 보이게 해요
+    function openInfoAt(content, position) {
+      infowindow.setContent(content);
+      infowindow.setPosition(position);
+      infowindow.open(map);
+      setTimeout(function () {
+        var chipsBottom = document.getElementById('category-chips').getBoundingClientRect().bottom;
+        var top = content.getBoundingClientRect().top;
+        if (top < chipsBottom + 8) map.panBy(0, top - chipsBottom - 16);
+      }, 350); // 카카오가 말풍선을 화면 안으로 옮기는 움직임이 끝난 뒤에 확인해요
     }
 
     // 가게 정보 말풍선 만들기: 이름, 업종, 주소, 전화, 상세보기/길찾기 버튼
@@ -697,35 +713,50 @@
       parent.appendChild(a);
     }
 
-    // 좌표 → 주소 (coord2Address는 (경도, 위도) 순서예요)
-    function getAddress(latlng) {
-      return new Promise(function (resolve) {
-        geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function (result, status) {
-          resolve(status === kakao.maps.services.Status.OK ? result[0] : null);
-        });
-      });
-    }
-
-    // 클릭한 자리 주변(30m)의 가게 찾기
-    // 지도에 그려진 주황색 아이콘은 코드로 알 수 없어서, 카테고리별로 주변 장소를 검색해 가장 가까운 곳을 골라요
+    // 누른 자리가 지도에 그려진 가게 아이콘/이름 위인지 알아보기
+    // 지도 그림 속 아이콘은 코드로 알 수 없어서, 주변 가게를 검색한 뒤
+    // 화면에서 누른 자리와 가까운(아이콘 + 옆 이름 글자 범위 안) 가게만 골라요
+    // 중개업소(AG2)는 지도 그림에 거의 안 나오는데 후보로 자주 끼어들어서 뺐어요
     var CATEGORIES = [
       'MT1', 'CS2', 'PS3', 'SC4', 'AC5', 'PK6', 'OL7', 'SW8', 'BK9', // 마트 편의점 어린이집 학교 학원 주차장 주유소 지하철역 은행
-      'CT1', 'AG2', 'PO3', 'AT4', 'AD5', 'FD6', 'CE7', 'HP8', 'PM9'  // 문화시설 중개업소 공공기관 관광명소 숙박 음식점 카페 병원 약국
+      'CT1', 'PO3', 'AT4', 'AD5', 'FD6', 'CE7', 'HP8', 'PM9'         // 문화시설 공공기관 관광명소 숙박 음식점 카페 병원 약국
     ];
-    var NEARBY_RADIUS = 30; // 미터
+    var LAST_CATEGORIES = ['PK6']; // "OO 주차장"처럼 가게에 딸린 곳은 목록 뒤로
+    var HIT_X = 70;      // 아이콘에서 좌우로 이만큼(화면 픽셀)까지: 이름 글자가 아이콘 옆에 있어서 넓게
+    var HIT_UP = 12;     // 아이콘보다 위쪽은 조금만
+    var HIT_DOWN = 30;   // 아이콘 아래쪽은 넓게: 이름 글자가 아이콘 아래에 그려질 때가 많아요
+    var MAX_HITS = 5;
 
-    function findNearbyPlaces(latlng) {
+    function findPlacesAtPoint(latlng) {
+      var projection = map.getProjection();
+      var click = projection.containerPointFromCoords(latlng);
+      // 화면 70픽셀이 실제로 몇 미터인지 계산해서 그만큼만 검색해요 (확대 정도에 따라 달라져요)
+      var edge = projection.coordsFromContainerPoint(new kakao.maps.Point(click.x + HIT_X + 5, click.y + HIT_DOWN));
+      var radius = Math.min(Math.max(Math.round(distanceMeters(latlng, edge)), 1), 20000);
+
       var searches = CATEGORIES.map(function (code) {
         return new Promise(function (resolve) {
           places.categorySearch(code, function (data, status) {
             resolve(status === kakao.maps.services.Status.OK ? data : []);
-          }, { location: latlng, radius: NEARBY_RADIUS, sort: kakao.maps.services.SortBy.DISTANCE });
+          }, { location: latlng, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE });
         });
       });
+
       return Promise.all(searches).then(function (lists) {
-        var all = [].concat.apply([], lists);
-        all.sort(function (a, b) { return Number(a.distance) - Number(b.distance); });
-        return all.slice(0, 3); // 가장 가까운 3곳
+        var hits = [].concat.apply([], lists).filter(function (place) {
+          var point = projection.containerPointFromCoords(new kakao.maps.LatLng(place.y, place.x));
+          place._dx = point.x - click.x;
+          place._dy = point.y - click.y;
+          // _dy가 음수면 가게(아이콘)가 누른 자리보다 위에 있다는 뜻 = 아이콘 아래 이름을 누른 경우
+          return Math.abs(place._dx) <= HIT_X && place._dy >= -HIT_DOWN && place._dy <= HIT_UP;
+        });
+        hits.sort(function (a, b) { // 누른 자리에서 화면상 가까운 순 (주차장은 뒤로)
+          var lastA = LAST_CATEGORIES.indexOf(a.category_group_code) !== -1 ? 1 : 0;
+          var lastB = LAST_CATEGORIES.indexOf(b.category_group_code) !== -1 ? 1 : 0;
+          if (lastA !== lastB) return lastA - lastB;
+          return (a._dx * a._dx + a._dy * a._dy) - (b._dx * b._dx + b._dy * b._dy);
+        });
+        return hits.slice(0, MAX_HITS);
       });
     }
 
