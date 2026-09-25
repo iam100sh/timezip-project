@@ -84,6 +84,23 @@
     #results .addr, #results .phone { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
     #results .message { color: var(--muted); cursor: default; }
 
+    /* 가게 정보 말풍선 (말풍선 바탕이 항상 흰색이라 색을 고정해요) */
+    .place-card { padding: 10px 12px; font-size: 13px; line-height: 1.5; color: #1f1f1f; width: 240px; white-space: normal; }
+    .place-card .name { font-weight: 600; font-size: 15px; }
+    .place-card .category { color: #6b6b6b; font-size: 12px; }
+    .place-card .row { margin-top: 4px; }
+    .place-card a { color: #2f6fed; text-decoration: none; }
+    .place-card .buttons { display: flex; gap: 6px; margin-top: 8px; }
+    .place-card .buttons a {
+      flex: 1; text-align: center; padding: 5px 0;
+      border: 1px solid #d0d7e6; border-radius: 6px; font-size: 12px;
+    }
+    .place-card .nearby { margin-top: 8px; padding-top: 6px; border-top: 1px solid #eee; color: #6b6b6b; font-size: 12px; }
+    .place-card .nearby button {
+      border: none; background: none; padding: 0; margin-right: 6px;
+      color: #2f6fed; font-size: 12px; cursor: pointer;
+    }
+
     /* 휴대폰: 목록을 지도 아래로 */
     @media (max-width: 700px) {
       main { flex-direction: column; }
@@ -195,10 +212,7 @@
             map.setLevel(CLUSTER_MIN_LEVEL - 1, { anchor: position });
           }
           map.panTo(position);
-          var box = document.createElement('div');
-          box.style.cssText = 'padding:6px 10px;font-size:13px;color:#1f1f1f;white-space:nowrap;';
-          box.textContent = place.place_name;
-          infowindow.setContent(box);
+          infowindow.setContent(buildPlaceCard(place));
           infowindow.open(map, marker);
         }
         kakao.maps.event.addListener(marker, 'click', focus);
@@ -257,35 +271,85 @@
         var nearby = answers[1];
         if (!address && nearby.length === 0) return;
 
-        var box = document.createElement('div');
-        box.style.cssText = 'padding:8px 10px;font-size:13px;color:#1f1f1f;line-height:1.5;white-space:nowrap;';
-
-        if (nearby.length > 0) {
-          var title = document.createElement('div');
-          title.style.cssText = 'font-weight:600;font-size:14px;';
-          title.textContent = nearby[0].place_name;
-          box.appendChild(title);
-          var others = nearby.slice(1).map(function (p) { return p.place_name + ' ' + p.distance + 'm'; });
-          if (others.length > 0) {
-            var more = document.createElement('div');
-            more.style.cssText = 'color:#6b6b6b;margin-bottom:4px;';
-            more.textContent = '근처: ' + others.join(', ');
-            box.appendChild(more);
-          }
-        }
-        if (address) {
-          if (address.road_address) addLine(box, 'road', '도로명: ' + address.road_address.address_name);
-          addLine(box, 'jibun', '지번: ' + address.address.address_name);
-        }
-
         clickMarker.setPosition(latlng);
         clickMarker.setMap(map);
+
+        if (nearby.length > 0) {
+          showNearbyCard(nearby, 0);
+          return;
+        }
+
+        // 근처에 가게가 없으면 주소만 보여줘요
+        var box = document.createElement('div');
+        box.className = 'place-card';
+        if (address.road_address) addLine(box, 'row', '도로명: ' + address.road_address.address_name);
+        addLine(box, 'row', '지번: ' + address.address.address_name);
         infowindow.setContent(box);
         infowindow.open(map, clickMarker);
       });
     });
 
     var clickCount = 0;
+
+    // 근처 가게 중 하나(index)를 크게 보여주고, 나머지는 눌러서 바꿀 수 있게 해요
+    function showNearbyCard(nearby, index) {
+      var card = buildPlaceCard(nearby[index]);
+      if (nearby.length > 1) {
+        var others = document.createElement('div');
+        others.className = 'nearby';
+        others.appendChild(document.createTextNode('근처: '));
+        nearby.forEach(function (p, i) {
+          if (i === index) return;
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = p.place_name + ' ' + p.distance + 'm';
+          btn.addEventListener('click', function () { showNearbyCard(nearby, i); });
+          others.appendChild(btn);
+        });
+        card.appendChild(others);
+      }
+      infowindow.setContent(card);
+      infowindow.open(map, clickMarker);
+    }
+
+    // 가게 정보 말풍선 만들기: 이름, 업종, 주소, 전화, 상세보기/길찾기 버튼
+    function buildPlaceCard(place) {
+      var card = document.createElement('div');
+      card.className = 'place-card';
+      addLine(card, 'name', place.place_name);
+      if (place.category_name) {
+        addLine(card, 'category', place.category_name.split(' > ').slice(-2).join(' · ')); // "음식점 > 카페 > 커피전문점" → "카페 · 커피전문점"
+      }
+      addLine(card, 'row', place.road_address_name || place.address_name);
+
+      if (place.phone) {
+        var phone = document.createElement('div');
+        phone.className = 'row';
+        var tel = document.createElement('a');
+        tel.href = 'tel:' + place.phone.replace(/[^0-9]/g, '');
+        tel.textContent = '☎ ' + place.phone;
+        phone.appendChild(tel);
+        card.appendChild(phone);
+      }
+
+      if (place.id) { // 주소 검색 결과에는 가게 번호가 없어서 버튼을 안 보여줘요
+        var buttons = document.createElement('div');
+        buttons.className = 'buttons';
+        addLink(buttons, '상세보기', place.place_url.replace('http://', 'https://')); // 카카오맵 가게 페이지 (영업시간, 사진, 리뷰)
+        addLink(buttons, '길찾기', 'https://map.kakao.com/link/to/' + place.id);   // 카카오맵 길찾기 (도착지로 설정)
+        card.appendChild(buttons);
+      }
+      return card;
+    }
+
+    function addLink(parent, text, url) {
+      var a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = text;
+      parent.appendChild(a);
+    }
 
     // 좌표 → 주소 (coord2Address는 (경도, 위도) 순서예요)
     function getAddress(latlng) {
