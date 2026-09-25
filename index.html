@@ -8,38 +8,51 @@
     :root {
       --bg: #f7f7f5;
       --text: #1f1f1f;
-      --muted: #6b6b6b;
       --accent: #2f6fed;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #161616;
         --text: #f0f0f0;
-        --muted: #a0a0a0;
         --accent: #6f9bff;
       }
     }
     * { box-sizing: border-box; margin: 0; }
+    html, body { height: 100%; }
     body {
-      min-height: 100vh;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
+      flex-direction: column;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-      text-align: center;
     }
-    h1 { font-size: clamp(2.5rem, 10vw, 4rem); letter-spacing: -0.03em; }
+    header { padding: 12px 16px; }
+    h1 { font-size: 1.5rem; letter-spacing: -0.03em; }
     h1 span { color: var(--accent); }
-    p { margin-top: 12px; color: var(--muted); font-size: 1.1rem; }
+    /* 1단계: 지도를 담을 영역 (화면 크기에 맞춰 꽉 채움) */
+    #map { flex: 1; width: 100%; }
   </style>
 </head>
 <body>
-  <main>
+  <header>
     <h1>time<span>zip</span></h1>
-    <p>곧 찾아올게요. 준비 중입니다.</p>
-  </main>
+  </header>
+
+  <!-- 1단계: 지도를 담을 영역 만들기 -->
+  <div id="map"></div>
+
+  <!-- 2단계: 실제 지도를 그리는 Javascript API 불러오기 -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150"></script>
+
+  <!-- 3단계: 지도를 띄우는 코드 작성 -->
+  <script>
+    var container = document.getElementById('map'); // 지도를 담을 영역
+    var options = {
+      center: new kakao.maps.LatLng(37.614829, 127.065526), // 지도의 중심좌표 (석계역)
+      level: 3 // 지도의 확대 레벨 (숫자가 작을수록 확대)
+    };
+
+    var map = new kakao.maps.Map(container, options); // 지도 생성
+  </script>
 </body>
 </html>
