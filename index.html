@@ -204,8 +204,33 @@
     function clearMarkers() {
       markers.forEach(function (m) { m.setMap(null); });
       markers = [];
+      clickMarker.setMap(null);
       infowindow.close();
     }
+
+    // 지도를 클릭하면 그 자리의 주소 알려주기 (좌표 → 주소)
+    var clickMarker = new kakao.maps.Marker(); // 클릭한 자리에 찍을 마커
+
+    kakao.maps.event.addListener(map, 'click', function (mouseEvent) {
+      var latlng = mouseEvent.latLng; // 클릭한 자리의 좌표
+
+      // coord2Address는 (경도, 위도) 순서예요
+      geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function (result, status) {
+        if (status !== kakao.maps.services.Status.OK) return;
+
+        var box = document.createElement('div');
+        box.style.cssText = 'padding:8px 10px;font-size:13px;color:#1f1f1f;line-height:1.5;white-space:nowrap;';
+        if (result[0].road_address) {
+          addLine(box, 'road', '도로명: ' + result[0].road_address.address_name);
+        }
+        addLine(box, 'jibun', '지번: ' + result[0].address.address_name);
+
+        clickMarker.setPosition(latlng);
+        clickMarker.setMap(map);
+        infowindow.setContent(box);
+        infowindow.open(map, clickMarker);
+      });
+    });
   </script>
 </body>
 </html>
