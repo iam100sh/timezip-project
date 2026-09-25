@@ -783,7 +783,7 @@
             return;
           }
           data.buses.sort(function (a, b) {
-            var byType = ROUTE_ORDER.indexOf(a.routeType) - ROUTE_ORDER.indexOf(b.routeType);
+            var byType = routeRank(a) - routeRank(b);
             return byType !== 0 ? byType : a.route.localeCompare(b.route, 'ko', { numeric: true });
           });
           data.buses.forEach(function (bus) { list.appendChild(buildBusRow(bus)); });
@@ -796,8 +796,16 @@
         });
     }
 
+    // 목록 정렬 순서 (종류를 모르는 노선은 맨 뒤로)
+    function routeRank(bus) {
+      if (/^N/.test(bus.route)) return ROUTE_ORDER.length; // 심야버스
+      var rank = ROUTE_ORDER.indexOf(bus.routeType);
+      return rank === -1 ? ROUTE_ORDER.length + 1 : rank;
+    }
+
     function buildBusRow(bus) {
-      var type = ROUTE_TYPES[bus.routeType] || { name: '', color: '#8a8a8a' };
+      var type = /^N/.test(bus.route) ? { name: '심야', color: '#1f2a44' } // N13 같은 심야버스
+        : ROUTE_TYPES[bus.routeType] || { name: '', color: '#8a8a8a' };
       var row = document.createElement('div');
       row.className = 'bus';
 
