@@ -161,7 +161,6 @@
       list.forEach(function (place) {
         var position = new kakao.maps.LatLng(place.y, place.x);
         var marker = new kakao.maps.Marker({ map: map, position: position });
-        markers.push(marker);
         bounds.extend(position);
 
         var item = document.createElement('li');
@@ -180,6 +179,7 @@
         }
         kakao.maps.event.addListener(marker, 'click', focus);
         item.addEventListener('click', focus);
+        markers.push({ marker: marker, focus: focus });
       });
 
       map.setBounds(bounds);
@@ -202,7 +202,7 @@
     }
 
     function clearMarkers() {
-      markers.forEach(function (m) { m.setMap(null); });
+      markers.forEach(function (m) { m.marker.setMap(null); });
       markers = [];
       clickMarker.setMap(null);
       infowindow.close();
@@ -213,6 +213,14 @@
 
     kakao.maps.event.addListener(map, 'click', function (mouseEvent) {
       var latlng = mouseEvent.latLng; // 클릭한 자리의 좌표
+
+      // 가게 마커를 누른 거면 주소 대신 가게 이름을 보여줘요
+      // (휴대폰에서는 마커를 눌러도 지도 클릭이 같이 일어날 수 있어서 직접 확인해요)
+      var hit = findMarkerAt(latlng);
+      if (hit) {
+        hit.focus();
+        return;
+      }
 
       // coord2Address는 (경도, 위도) 순서예요
       geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function (result, status) {
@@ -231,6 +239,19 @@
         infowindow.open(map, clickMarker);
       });
     });
+
+    // 클릭한 자리가 가게 마커 그림 위인지 확인 (화면 픽셀 거리로 비교)
+    function findMarkerAt(latlng) {
+      var projection = map.getProjection();
+      var click = projection.containerPointFromCoords(latlng);
+      for (var i = 0; i < markers.length; i++) {
+        var point = projection.containerPointFromCoords(markers[i].marker.getPosition());
+        var dx = click.x - point.x;
+        var dy = click.y - point.y; // 마커 그림은 좌표보다 위쪽에 그려져요
+        if (Math.abs(dx) <= 16 && dy >= -40 && dy <= 6) return markers[i];
+      }
+      return null;
+    }
   </script>
 </body>
 </html>
