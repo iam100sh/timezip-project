@@ -197,31 +197,97 @@
       search(keyword);
     });
 
-    // 내 위치를 알고 있으면 내 주변에서, 모르면 전체 지역에서 검색해요
+    // 검색 기준 정하기
+    //  - "창동역 카페"처럼 지역이 들어 있으면 → 그 지역 기준
+    //  - "카페"처럼 시설만 쓰면 → 내 위치 기준 (내 위치 버튼을 눌렀을 때)
+    //  - 둘 다 아니면 → 전체 지역
     function search(keyword, everywhere) {
-      if (myPosition && !everywhere) {
-        searchNearMe(keyword, 0);
-      } else {
+      if (everywhere) {
         searchEverywhere(keyword);
+        return;
       }
+      detectArea(keyword, function (area) {
+        if (area && area.position) {
+          searchNear(area.facility, { position: area.position, label: area.name }, 0, keyword);
+        } else if (area) {
+          searchRegion(keyword, area);
+        } else if (myPosition) {
+          searchNear(keyword, { position: myPosition, label: '내 위치' }, 0, keyword);
+        } else {
+          searchEverywhere(keyword);
+        }
+      });
     }
 
-    // 내 주변 검색: 500m 안에서 찾고, 결과가 5곳보다 적으면 1km → 2km로 넓혀요
+    // 검색어 앞부분이 지역인지 알아보기 ("창동역 카페" → 지역 "창동역", 시설 "카페")
+    var FILLER_WORDS = ['근처', '주변', '근방', '앞', '옆'];
+    var LANDMARK_GROUPS = ['SW8', 'SC4', 'AT4', 'PO3', 'CT1']; // 지하철역, 학교, 관광명소, 공공기관, 문화시설
+
+    function detectArea(keyword, done) {
+      var words = keyword.split(/\s+/).filter(function (w) { return FILLER_WORDS.indexOf(w) === -1; });
+      if (words.length < 2) {
+        done(null);
+        return;
+      }
+      var areaText = words.slice(0, -1).join(' ');
+      var facility = words[words.length - 1];
+
+      // 1) "노원구", "월계동" 같은 동네 이름인지 먼저 확인
+      geocoder.addressSearch(areaText, function (result, status) {
+        var regions = status === kakao.maps.services.Status.OK
+          ? result.filter(function (r) { return r.address_type === 'REGION'; })
+          : [];
+        if (regions.length > 0) {
+          // 이름이 같은 동네가 여러 곳이면(예: 서울 월계동, 광주 월계동) 내 위치나 지금 보는 지도에서 가장 가까운 곳으로
+          var from = myPosition || map.getCenter();
+          regions.sort(function (a, b) { return squaredDistance(from, a) - squaredDistance(from, b); });
+          done({ name: areaText, facility: facility, regionName: regions[0].address_name, regionCenter: new kakao.maps.LatLng(regions[0].y, regions[0].x) });
+          return;
+        }
+        // 2) 역·학교·명소 같은 장소인지 확인 → 그 장소 좌표를 중심으로 검색
+        places.keywordSearch(areaText, function (data, status) {
+          var top = status === kakao.maps.services.Status.OK ? data[0] : null;
+          var isLandmark = top && (LANDMARK_GROUPS.indexOf(top.category_group_code) !== -1 || /교통,수송|대학교/.test(top.category_name));
+          done(isLandmark ? { name: areaText, facility: facility, position: new kakao.maps.LatLng(top.y, top.x) } : null);
+        }, { size: 1 });
+      });
+    }
+
+    // 동네 검색: 그 동네 가운데에서 가까운 순으로 찾아요 ("노원구 카페", "월계동 카페")
+    function searchRegion(keyword, area) {
+      var options = { location: area.regionCenter, radius: 20000, sort: kakao.maps.services.SortBy.DISTANCE };
+      fetchAllPages(keyword, options, function (found) {
+        if (found.length > 0) {
+          showPlaces(found, { notice: area.regionName + '에서 찾았어요.' });
+        } else {
+          searchEverywhere(keyword);
+        }
+      });
+    }
+
+    // 두 지점이 얼마나 먼지 비교용 (정확한 미터가 아니라 크기 비교만 해요)
+    function squaredDistance(latlng, place) {
+      var dLat = latlng.getLat() - Number(place.y);
+      var dLng = latlng.getLng() - Number(place.x);
+      return dLat * dLat + dLng * dLng;
+    }
+
+    // 기준점 주변 검색: 500m 안에서 찾고, 결과가 5곳보다 적으면 1km → 2km로 넓혀요
     var RADIUS_STEPS = [500, 1000, 2000]; // 미터 (500m는 걸어서 7~8분)
     var MIN_RESULTS = 5;
 
-    function searchNearMe(keyword, step) {
+    function searchNear(facility, anchor, step, originalKeyword) {
       var radius = RADIUS_STEPS[step];
       var isLastStep = step === RADIUS_STEPS.length - 1;
-      var options = { location: myPosition, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE }; // 가까운 순
+      var options = { location: anchor.position, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE }; // 가까운 순
 
-      fetchAllPages(keyword, options, function (found) {
+      fetchAllPages(facility, options, function (found) {
         if (found.length >= MIN_RESULTS || (isLastStep && found.length > 0)) {
-          showPlaces(found, { keyword: keyword, radius: radius });
+          showPlaces(found, { keyword: originalKeyword, radius: radius, anchor: anchor });
         } else if (!isLastStep) {
-          searchNearMe(keyword, step + 1);
+          searchNear(facility, anchor, step + 1, originalKeyword);
         } else {
-          searchEverywhere(keyword, '내 위치 ' + formatDistance(radius) + ' 안에는 없어서 전체 지역에서 찾았어요.');
+          searchEverywhere(originalKeyword, anchor.label + ' ' + formatDistance(radius) + ' 안에는 없어서 전체 지역에서 찾았어요.');
         }
       });
     }
@@ -282,7 +348,7 @@
         // 내 주변 검색이면: 목록 맨 위에 안내, 지도에 검색 반경 원 표시
         var summary = document.createElement('li');
         summary.className = 'summary';
-        summary.textContent = '내 위치 ' + formatDistance(info.radius) + ' 안 · ' + list.length + '곳 · 가까운 순';
+        summary.textContent = info.anchor.label + ' ' + formatDistance(info.radius) + ' 안 · ' + list.length + '곳 · 가까운 순';
         var everywhereButton = document.createElement('button');
         everywhereButton.type = 'button';
         everywhereButton.textContent = '전체 지역에서 검색';
@@ -290,7 +356,7 @@
         summary.appendChild(everywhereButton);
         resultList.appendChild(summary);
 
-        searchCircle.setPosition(myPosition);
+        searchCircle.setPosition(info.anchor.position);
         searchCircle.setRadius(info.radius);
         searchCircle.setMap(map);
         var circleBounds = searchCircle.getBounds(); // 반경 원 전체가 보이게
