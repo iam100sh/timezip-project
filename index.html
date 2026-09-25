@@ -65,7 +65,26 @@
 
     /* 지도 + 검색 결과 목록 */
     main { flex: 1; display: flex; min-height: 0; }
-    #map { flex: 1; }
+    #map-wrap { flex: 1; position: relative; min-height: 0; }
+    #map { position: absolute; inset: 0; }
+
+    /* 내 위치 버튼 (지도 오른쪽 아래) */
+    #my-location {
+      position: absolute; right: 12px; bottom: 28px; z-index: 2;
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 1px solid var(--line); background: var(--surface); color: var(--accent);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    #my-location.loading svg { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 지도 위 내 위치 파란 점 */
+    .my-dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #2f6fed; border: 3px solid #fff;
+      box-shadow: 0 0 0 1px rgba(47, 111, 237, 0.4), 0 1px 4px rgba(0, 0, 0, 0.3);
+    }
     #results {
       width: 320px;
       overflow-y: auto;
@@ -118,7 +137,14 @@
   </header>
 
   <main>
-    <div id="map"></div>
+    <div id="map-wrap">
+      <div id="map"></div>
+      <button id="my-location" type="button" title="내 위치" aria-label="내 위치로 이동">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/>
+        </svg>
+      </button>
+    </div>
     <ul id="results"></ul>
   </main>
 
@@ -382,6 +408,44 @@
         return all.slice(0, 3); // 가장 가까운 3곳
       });
     }
+
+    // 내 위치 버튼: 브라우저에게 현재 위치를 물어보고, 지도에 파란 점으로 보여줘요
+    // (위치 기능은 https 주소나 localhost에서만 작동해요)
+    var myLocationButton = document.getElementById('my-location');
+    var myDot = new kakao.maps.CustomOverlay({ content: '<div class="my-dot"></div>', zIndex: 3 });
+    var myAccuracy = new kakao.maps.Circle({
+      strokeWeight: 1, strokeColor: '#2f6fed', strokeOpacity: 0.4,
+      fillColor: '#2f6fed', fillOpacity: 0.12
+    });
+
+    myLocationButton.addEventListener('click', function () {
+      if (!navigator.geolocation) {
+        alert('이 브라우저에서는 위치 기능을 쓸 수 없어요.');
+        return;
+      }
+      myLocationButton.classList.add('loading');
+
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        myLocationButton.classList.remove('loading');
+        var here = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+
+        myDot.setPosition(here);
+        myDot.setMap(map);
+        myAccuracy.setPosition(here);
+        myAccuracy.setRadius(pos.coords.accuracy); // 위치 오차 범위(미터)를 옅은 원으로
+        myAccuracy.setMap(map);
+
+        if (map.getLevel() > 4) map.setLevel(4);
+        map.panTo(here);
+      }, function (err) {
+        myLocationButton.classList.remove('loading');
+        if (err.code === err.PERMISSION_DENIED) {
+          alert('위치 권한이 꺼져 있어요. 브라우저 설정에서 이 사이트의 위치 권한을 허용해 주세요.');
+        } else {
+          alert('현재 위치를 찾지 못했어요. 잠시 후 다시 해 보세요.');
+        }
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    });
 
     // 클릭한 자리가 가게 마커 그림 위인지 확인 (화면 픽셀 거리로 비교)
     function findMarkerAt(latlng) {
