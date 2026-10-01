@@ -1510,7 +1510,10 @@
         item.addEventListener('click', function () { focusWaitPlace(p); });
         waitList.appendChild(item);
 
-        var marker = new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(p.y, p.x), title: p.place_name });
+        var marker = new kakao.maps.Marker({
+          map: map, position: new kakao.maps.LatLng(p.y, p.x), title: p.place_name,
+          image: pinImage(p._activity.color) // 목록 태그와 같은 카테고리 색
+        });
         var focus = function () { focusWaitPlace(p); };
         kakao.maps.event.addListener(marker, 'click', focus);
         waitMarkers.push({ marker: marker, focus: focus }); // 휴대폰에서 지도 클릭과 겹쳐도 찾을 수 있게 검색 마커와 같은 모양으로
@@ -1532,6 +1535,21 @@
       addLink(buttons, '돌아오는 길', 'https://map.kakao.com/link/by/walk/' + placePoint + '/' + stopPoint);
       card.appendChild(buttons);
       openInfoAt(card, new kakao.maps.LatLng(place.y, place.x));
+    }
+
+    // 카테고리 색 핀 그림 (색마다 한 번만 만들어서 다시 써요)
+    var pinImages = {};
+    function pinImage(color) {
+      if (pinImages[color]) return pinImages[color];
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="36" viewBox="0 0 26 36">' +
+        '<path d="M13 1C6.4 1 1 6.3 1 12.9 1 21.8 13 35 13 35s12-13.2 12-22.1C25 6.3 19.6 1 13 1z" fill="' + color + '" stroke="#fff" stroke-width="2"/>' +
+        '<circle cx="13" cy="13" r="4.5" fill="#fff"/></svg>';
+      pinImages[color] = new kakao.maps.MarkerImage(
+        'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+        new kakao.maps.Size(26, 36),
+        { offset: new kakao.maps.Point(13, 35) } // 핀 끝이 가게 위치에 오게
+      );
+      return pinImages[color];
     }
 
     function clearWaitMarkers() {
