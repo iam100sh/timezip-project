@@ -43,7 +43,12 @@ module.exports = async function handler(req, res) {
         direction: b.adirection, // 종점 방향
         nextStation: b.nxtStn,   // 다음 정류장
         arrival1: b.arrmsg1,     // 첫 번째 버스 (예: "3분12초후[2번째 전]")
-        arrival2: b.arrmsg2      // 두 번째 버스
+        arrival2: b.arrmsg2,     // 두 번째 버스
+        last1: b.isLast1 === '1',        // 막차인지
+        lowFloor1: b.busType1 === '1',   // 저상버스인지
+        congestion1: b.congestion1,      // 혼잡도: 3 여유, 4 보통, 5 혼잡 (0이면 정보 없음)
+        firstTime: formatTime(b.firstTm), // 첫차 시각 (예: "04:00")
+        lastTime: formatTime(b.lastTm)    // 막차 시각
       }));
       return send(res, 200, { arsId: arsId, name: items[0] ? items[0].stNm : '', buses: buses }, 20); // 도착 정보는 20초 캐시
     }
@@ -65,6 +70,12 @@ async function callBusApi(operation, params, key) {
     throw new Error(header.headerMsg || '알 수 없는 오류');
   }
   return (data.msgBody && data.msgBody.itemList) || [];
+}
+
+// "0400  " → "04:00"
+function formatTime(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(0, 2) + ':' + digits.slice(2, 4) : '';
 }
 
 function send(res, status, body, cacheSeconds) {

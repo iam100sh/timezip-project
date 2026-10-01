@@ -119,20 +119,50 @@
       display: flex; align-items: center; justify-content: center; cursor: pointer;
     }
 
-    /* 정류장 카드 */
-    .stop-card { width: 280px; }
-    .stop-card .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-    .stop-card .refresh { border: 1px solid #d0d7e6; background: #fff; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #2f6fed; cursor: pointer; flex-shrink: 0; }
-    .stop-card .bus-list { max-height: 240px; overflow-y: auto; margin-top: 6px; border-top: 1px solid #eee; }
-    .stop-card .bus { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f2f2f2; }
-    .stop-card .route {
-      flex-shrink: 0; min-width: 52px; text-align: center; padding: 1px 6px; border-radius: 4px;
-      color: #fff; font-weight: 600; font-size: 12px; height: fit-content;
+    .bus-stop.selected { width: 30px; height: 30px; background: #ff7a00; z-index: 5; }
+
+    /* 버스 도착 정보 패널 (컴퓨터: 오른쪽, 휴대폰: 아래쪽) */
+    #stop-panel {
+      width: 360px; display: flex; flex-direction: column; min-height: 0;
+      background: var(--surface); border-left: 1px solid var(--line);
     }
-    .stop-card .bus-info { min-width: 0; font-size: 12px; }
-    .stop-card .bus-info .dir { color: #6b6b6b; }
-    .stop-card .bus-info .arr { color: #1f1f1f; }
-    .stop-card .bus-info .arr.soon { color: #e60012; font-weight: 600; }
+    #stop-panel[hidden] { display: none; }
+    main.stop-open #results { display: none; }
+    .sp-head { display: flex; align-items: flex-start; gap: 8px; padding: 14px 16px 6px; }
+    .sp-title { flex: 1; min-width: 0; }
+    .sp-name { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
+    .sp-sub { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+    .sp-close {
+      width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+      border: none; background: var(--bg); color: var(--text); font-size: 16px; cursor: pointer;
+    }
+    .sp-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 10px; font-size: 0.8rem; color: var(--muted); }
+    .sp-refresh { border: 1px solid var(--line); background: var(--surface); color: var(--accent); border-radius: 14px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer; }
+    .sp-list { flex: 1; overflow-y: auto; border-top: 1px solid var(--line); }
+    .sp-message { padding: 20px 16px; color: var(--muted); }
+
+    .bus-row {
+      display: grid; grid-template-columns: 72px 1fr auto; gap: 4px 12px; align-items: center;
+      padding: 12px 16px; border-bottom: 1px solid var(--line);
+    }
+    .bus-row.ended { opacity: 0.45; }
+    .route-chip {
+      grid-row: span 2; align-self: start;
+      padding: 5px 0; border-radius: 6px; text-align: center;
+      color: #fff; font-weight: 700; font-size: 1rem; letter-spacing: -0.02em;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .bus-dir { font-size: 0.85rem; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bus-dir b { color: var(--text); font-weight: 600; }
+    .bus-badges { display: flex; gap: 4px; flex-wrap: wrap; min-height: 0; }
+    .badge { font-size: 0.7rem; padding: 1px 6px; border-radius: 8px; border: 1px solid currentColor; }
+    .badge.last { color: #e5484d; }
+    .badge.low { color: var(--accent); }
+    .badge.crowded { color: #e5484d; }
+    .arr { grid-column: 3; grid-row: 1; text-align: right; font-size: 1.3rem; font-weight: 700; white-space: nowrap; letter-spacing: -0.02em; }
+    .arr.soon { color: #e5484d; }
+    .arr.wait { font-size: 0.95rem; font-weight: 600; color: var(--muted); }
+    .arr-sub { grid-column: 3; grid-row: 2; text-align: right; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 
     /* 지도 위 내 위치 파란 점 */
     .my-dot {
@@ -195,6 +225,10 @@
     @media (max-width: 700px) {
       main { flex-direction: column; }
       #results { width: 100%; max-height: 40%; border-left: none; border-top: 1px solid var(--line); }
+      #stop-panel {
+        width: 100%; height: 58%; flex-shrink: 0; border-left: none; border-top: 1px solid var(--line); /* 높이 고정: 목록이 들어와도 지도 크기가 안 바뀌게 */
+        border-radius: 16px 16px 0 0; box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+      }
     }
   </style>
 </head>
@@ -231,6 +265,20 @@
       </button>
     </div>
     <ul id="results"></ul>
+    <section id="stop-panel" hidden aria-label="버스 도착 정보">
+      <div class="sp-head">
+        <div class="sp-title">
+          <div class="sp-name"></div>
+          <div class="sp-sub"></div>
+        </div>
+        <button type="button" class="sp-close" aria-label="닫기">✕</button>
+      </div>
+      <div class="sp-bar">
+        <span class="sp-updated"></span>
+        <button type="button" class="sp-refresh">↻ 새로고침</button>
+      </div>
+      <div class="sp-list"></div>
+    </section>
   </main>
 
   <!-- Javascript API 불러오기 + services, clusterer 라이브러리 (&libraries=services,clusterer) -->
@@ -594,6 +642,7 @@
     }
 
     function clearMarkers() {
+      closeStopPanel(); // 검색하면 버스 패널은 닫고 결과 목록을 보여줘요
       clusterer.clear();
       markers = [];
       searchCircle.setMap(null);
@@ -871,7 +920,8 @@
 
     function addStop(stop) {
       var el = document.createElement('div');
-      el.className = 'bus-stop';
+      el.className = 'bus-stop' + (selectedStop && selectedStop.arsId === stop.arsId ? ' selected' : '');
+      el.dataset.arsId = stop.arsId;
       el.title = stop.name;
       el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 11h16M8 21v-3M16 21v-3"/></svg>';
       var position = new kakao.maps.LatLng(stop.lat, stop.lng);
@@ -894,60 +944,159 @@
       if (hideAfter) hintTimer = setTimeout(function () { busHint.hidden = true; }, hideAfter);
     }
 
-    // 정류장 카드: 이름, 정류장 번호, 지나는 버스(종류 색깔), 방향, 도착 정보
+    // ───────── 버스 도착 정보 패널 ─────────
+    // 정류장을 누르면 패널을 열고, 곧 오는 버스 순으로 크게 보여줘요. 열려 있는 동안 30초마다 새로고침해요.
+    var stopPanel = document.getElementById('stop-panel');
+    var mainEl = document.querySelector('main');
+    var spName = stopPanel.querySelector('.sp-name');
+    var spSub = stopPanel.querySelector('.sp-sub');
+    var spUpdated = stopPanel.querySelector('.sp-updated');
+    var spList = stopPanel.querySelector('.sp-list');
+    var selectedStop = null;
+    var refreshTimer = null;
+    var clockTimer = null;
+    var updatedAt = 0;
+    var AUTO_REFRESH_MS = 30000;
+
+    stopPanel.querySelector('.sp-close').addEventListener('click', closeStopPanel);
+
+    // 지도 영역 크기가 바뀌면(패널 열고 닫기, 화면 회전 등) 카카오 지도에 알려서 다시 맞춰요
+    if (window.ResizeObserver) {
+      var keepCenter = null;
+      new ResizeObserver(function () {
+        var center = keepCenter || map.getCenter();
+        map.relayout();
+        map.setCenter(center);
+        keepCenter = null;
+      }).observe(document.getElementById('map'));
+    }
+    stopPanel.querySelector('.sp-refresh').addEventListener('click', function () {
+      if (selectedStop) loadArrivals(selectedStop);
+    });
+
     function showStopCard(stop, position) {
-      var card = document.createElement('div');
-      card.className = 'place-card stop-card';
-      var head = document.createElement('div');
-      head.className = 'head';
-      var title = document.createElement('div');
-      addLine(title, 'name', stop.name);
-      addLine(title, 'category', '정류장 번호 ' + stop.arsId);
-      head.appendChild(title);
-      var refresh = document.createElement('button');
-      refresh.type = 'button';
-      refresh.className = 'refresh';
-      refresh.textContent = '새로고침';
-      refresh.addEventListener('click', function () { showStopCard(stop, position); });
-      head.appendChild(refresh);
-      card.appendChild(head);
+      selectedStop = stop;
+      infowindow.close();
+      spName.textContent = stop.name;
+      spSub.textContent = '정류장 번호 ' + stop.arsId;
+      spUpdated.textContent = '';
+      spList.innerHTML = '<div class="sp-message">버스 정보를 불러오는 중…</div>';
 
-      var list = document.createElement('div');
-      list.className = 'bus-list';
-      addLine(list, 'row', '버스 정보를 불러오는 중…');
-      card.appendChild(list);
+      var wasHidden = stopPanel.hidden;
+      stopPanel.hidden = false;
+      mainEl.classList.add('stop-open');
+      // 패널이 생기면 지도 크기가 바뀌어서, 화면이 다시 그려진 다음 지도 크기를 맞추고 정류장으로 이동해요
+      keepCenter = position; // 크기가 바뀌면 이 정류장을 가운데로
+      setTimeout(function () {
+        if (wasHidden) map.relayout();
+        map.setCenter(position);
+      }, 0);
+      highlightStop();
 
-      infowindow.setContent(card);
-      infowindow.setPosition(position);
-      infowindow.open(map);
+      loadArrivals(stop);
+      clearInterval(refreshTimer);
+      refreshTimer = setInterval(function () { loadArrivals(stop); }, AUTO_REFRESH_MS);
+      clearInterval(clockTimer);
+      clockTimer = setInterval(updateClock, 5000);
+    }
 
-      // 말풍선 크기는 내용을 넣을 때 정해져서, 목록을 다 채운 뒤 다시 넣어 크기를 맞춰요
-      function resize() {
-        if (infowindow.getContent() === card) infowindow.setContent(card); // 그 사이 다른 말풍선을 열었으면 건드리지 않아요
-      }
+    function closeStopPanel() {
+      if (stopPanel.hidden) return;
+      selectedStop = null;
+      stopPanel.hidden = true;
+      mainEl.classList.remove('stop-open');
+      clearInterval(refreshTimer);
+      clearInterval(clockTimer);
+      var center = map.getCenter();
+      setTimeout(function () { map.relayout(); map.setCenter(center); }, 0);
+      highlightStop();
+    }
 
+    // 지도 위에서 지금 보고 있는 정류장을 주황색으로 크게
+    function highlightStop() {
+      stopOverlays.forEach(function (o) {
+        var el = o.getContent();
+        el.classList.toggle('selected', !!selectedStop && el.dataset.arsId === selectedStop.arsId);
+      });
+    }
+
+    function updateClock() {
+      if (!updatedAt) return;
+      var seconds = Math.round((Date.now() - updatedAt) / 1000);
+      spUpdated.textContent = (seconds < 10 ? '방금' : seconds + '초 전') + ' 업데이트 · 30초마다 자동 새로고침';
+    }
+
+    function loadArrivals(stop) {
       fetch('/api/bus?type=arrivals&arsId=' + stop.arsId)
         .then(function (r) { return r.json(); })
         .then(function (data) {
+          if (selectedStop !== stop) return; // 그 사이 다른 정류장을 눌렀으면 버려요
           if (data.error) throw new Error(data.error);
-          list.innerHTML = '';
-          if (data.buses.length === 0) {
-            addLine(list, 'row', '이 정류장을 지나는 버스 정보가 없어요.');
-            resize();
-            return;
-          }
-          data.buses.sort(function (a, b) {
-            var byType = routeRank(a) - routeRank(b);
-            return byType !== 0 ? byType : a.route.localeCompare(b.route, 'ko', { numeric: true });
-          });
-          data.buses.forEach(function (bus) { list.appendChild(buildBusRow(bus)); });
-          resize();
+          renderArrivals(stop, data.buses);
+          updatedAt = Date.now();
+          updateClock();
         })
         .catch(function () {
-          list.innerHTML = '';
-          addLine(list, 'row', '버스 정보를 가져오지 못했어요. 새로고침을 눌러 보세요.');
-          resize();
+          if (selectedStop !== stop) return;
+          spList.innerHTML = '<div class="sp-message">버스 정보를 가져오지 못했어요. 새로고침을 눌러 보세요.</div>';
         });
+    }
+
+    function renderArrivals(stop, buses) {
+      if (buses.length === 0) {
+        spList.innerHTML = '<div class="sp-message">이 정류장을 지나는 버스 정보가 없어요.</div>';
+        return;
+      }
+
+      // 정류장 방면: 노선들의 "다음 정류장" 중 가장 많은 것 (예: "석계역굴다리앞 방면")
+      var counts = {};
+      buses.forEach(function (b) {
+        var next = (b.nextStation || '').trim();
+        if (next) counts[next] = (counts[next] || 0) + 1;
+      });
+      var towards = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
+      spSub.textContent = '정류장 번호 ' + stop.arsId + (towards ? ' · ' + towards + ' 방면' : '');
+
+      // 곧 오는 순 → 같으면 버스 종류 순 → 번호 순
+      buses.forEach(function (b) { b._arr = parseArrival(b.arrival1); });
+      buses.sort(function (a, b) {
+        return (a._arr.order - b._arr.order) ||
+          (routeRank(a) - routeRank(b)) ||
+          a.route.localeCompare(b.route, 'ko', { numeric: true });
+      });
+
+      spList.innerHTML = '';
+      buses.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+    }
+
+    // 도착 메시지 해석: "3분12초후[2번째 전]" → { main: "3분", sub: "2정거장 전", order: 192, soon: true }
+    function parseArrival(message) {
+      var text = (message || '').trim();
+      var last = /\[막차\]/.test(text);
+      text = text.replace('[막차]', '').trim();
+      var info = { main: text || '정보 없음', sub: '', order: 70000, soon: false, wait: true, ended: false, last: last };
+
+      var m = text.match(/^(?:(\d+)분)?\s*(?:(\d+)초)?후\[(\d+)번째 전\]/);
+      if (m && (m[1] || m[2])) {
+        var minutes = Number(m[1] || 0);
+        var seconds = Number(m[2] || 0);
+        info.main = minutes === 0 ? '1분 이내' : minutes + '분';
+        info.sub = m[3] + '정거장 전';
+        info.order = minutes * 60 + seconds;
+        info.soon = minutes <= 3;
+        info.wait = false;
+      } else if (text.indexOf('곧 도착') !== -1) {
+        info.main = '곧 도착'; info.order = 0; info.soon = true; info.wait = false;
+      } else if (text.indexOf('차고지') !== -1) {
+        info.main = '차고지 출발'; info.order = 40000;
+      } else if (text.indexOf('출발대기') !== -1) {
+        info.main = '출발 대기'; info.order = 50000;
+      } else if (text.indexOf('회차') !== -1) {
+        info.main = '회차 대기'; info.order = 50000;
+      } else if (text.indexOf('운행종료') !== -1) {
+        info.main = '운행 종료'; info.order = 99999; info.ended = true;
+      }
+      return info;
     }
 
     // 목록 정렬 순서 (종류를 모르는 노선은 맨 뒤로)
@@ -957,35 +1106,60 @@
       return rank === -1 ? ROUTE_ORDER.length + 1 : rank;
     }
 
+    // 버스 한 줄:  [번호]  지선 · 석계역행          3분
+    //                    막차 저상 혼잡     2정거장 전 · 다음 15분
     function buildBusRow(bus) {
       var type = /^N/.test(bus.route) ? { name: '심야', color: '#1f2a44' } // N13 같은 심야버스
         : ROUTE_TYPES[bus.routeType] || { name: '', color: '#8a8a8a' };
+      var arr = bus._arr || parseArrival(bus.arrival1);
+      var next = parseArrival(bus.arrival2);
+
       var row = document.createElement('div');
-      row.className = 'bus';
+      row.className = 'bus-row' + (arr.ended ? ' ended' : '');
 
       var chip = document.createElement('div');
-      chip.className = 'route';
+      chip.className = 'route-chip';
       chip.style.background = type.color;
       chip.textContent = bus.route;
-      chip.title = type.name + '버스';
+      chip.title = (type.name ? type.name + '버스 ' : '') + bus.route;
       row.appendChild(chip);
 
-      var info = document.createElement('div');
-      info.className = 'bus-info';
-      var next = bus.nextStation && bus.nextStation.trim();
-      addLine(info, 'dir', (type.name ? type.name + ' · ' : '') + bus.direction + ' 방향' + (next ? ' (다음: ' + next + ')' : ''));
-      addLine(info, 'arr' + (isSoon(bus.arrival1) ? ' soon' : ''), bus.arrival1);
-      if (bus.arrival2 && bus.arrival2 !== bus.arrival1) addLine(info, 'arr', bus.arrival2);
-      row.appendChild(info);
+      var dir = document.createElement('div');
+      dir.className = 'bus-dir';
+      var dirName = document.createElement('b');
+      dirName.textContent = bus.direction + '행';
+      if (type.name) dir.appendChild(document.createTextNode(type.name + ' · '));
+      dir.appendChild(dirName);
+      row.appendChild(dir);
+
+      var main = document.createElement('div');
+      main.className = 'arr' + (arr.soon ? ' soon' : '') + (arr.wait ? ' wait' : '');
+      main.textContent = arr.main;
+      row.appendChild(main);
+
+      var badges = document.createElement('div');
+      badges.className = 'bus-badges';
+      if (arr.last || bus.last1) addBadge(badges, 'last', '막차');
+      if (bus.lowFloor1 && !arr.ended) addBadge(badges, 'low', '저상');
+      if (bus.congestion1 === '5' && !arr.wait) addBadge(badges, 'crowded', '혼잡'); // 여유·보통은 대부분이라 혼잡할 때만 표시
+      if (arr.ended && bus.firstTime) addBadge(badges, '', '첫차 ' + bus.firstTime);
+      row.appendChild(badges);
+
+      var sub = document.createElement('div');
+      sub.className = 'arr-sub';
+      var parts = [];
+      if (arr.sub) parts.push(arr.sub);
+      if (!next.wait || (next.main && next.main !== arr.main && !next.ended)) parts.push('다음 ' + next.main);
+      sub.textContent = parts.join(' · ');
+      row.appendChild(sub);
       return row;
     }
 
-    // "곧 도착", "2분후" 처럼 3분 안에 오는 버스는 빨간색으로
-    function isSoon(message) {
-      if (!message) return false;
-      if (message.indexOf('곧 도착') !== -1) return true;
-      var match = message.match(/^(\d+)분/);
-      return !!match && Number(match[1]) <= 3 || /^\d+초후/.test(message);
+    function addBadge(parent, className, text) {
+      var span = document.createElement('span');
+      span.className = 'badge ' + className;
+      span.textContent = text;
+      parent.appendChild(span);
     }
 
     // 클릭한 자리가 가게 마커 그림 위인지 확인 (화면 픽셀 거리로 비교)
