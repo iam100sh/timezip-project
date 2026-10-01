@@ -5,6 +5,8 @@
 //       → 주변 정류장 목록 (서울 + 경기, 같은 정류장은 하나로 합쳐요)
 //   /api/bus?type=arrivals&id=110000183&arsId=11283&seoul=1&gg=1
 //       → 정류장을 지나는 버스와 도착 정보 (서울 버스 + 경기 버스)
+//   /api/bus?type=route&routeId=100100147
+//       → 노선이 지나는 정류장 목록 (순서대로). 목적지까지 가는 버스인지 확인할 때 써요
 //
 // 도착 정보는 서울/경기 모두 같은 모양으로 바꿔서 보내요:
 //   { status: 'running' | 'soon' | 'garage' | 'wait' | 'ended' | 'none', minutes, stops }
@@ -90,7 +92,23 @@ module.exports = async function handler(req, res) {
       return send(res, 200, { buses: mergeBuses(seoulBuses, ggBuses) }, 20); // 도착 정보는 20초 캐시
     }
 
-    return send(res, 400, { error: 'type은 nearby 또는 arrivals예요.' });
+    if (type === 'route') {
+      const routeId = url.searchParams.get('routeId') || '';
+      if (!/^\d{6,12}$/.test(routeId)) return send(res, 400, { error: 'routeId(노선 ID)가 필요해요.' });
+      // 노선 ID가 2로 시작하면 경기 노선, 아니면 서울 노선이에요
+      let stations;
+      if (routeId.charAt(0) === '2') {
+        const items = await callGG('busrouteservice/v2/getBusRouteStationListv2', { routeId: routeId }, key, 'busRouteStationList');
+        stations = items.map((s) => ({ seq: Number(s.stationSeq), id: String(s.stationId), name: s.stationName, lat: Number(s.y), lng: Number(s.x) }));
+      } else {
+        const items = await callSeoulRoute('getStaionByRoute', { busRouteId: routeId }, key); // 서울 API 이름이 원래 Staion이에요
+        stations = items.map((s) => ({ seq: Number(s.seq), id: String(s.station), name: s.stationNm, lat: Number(s.gpsY), lng: Number(s.gpsX) }));
+      }
+      stations.sort((a, b) => a.seq - b.seq);
+      return send(res, 200, { routeId: routeId, stations: stations }, 86400); // 노선은 거의 안 바뀌니 하루 캐시
+    }
+
+    return send(res, 400, { error: 'type은 nearby, arrivals, route 중 하나예요.' });
   } catch (err) {
     return send(res, 502, { error: '버스 정보를 가져오지 못했어요.', detail: String(err.message || err) });
   }
@@ -108,11 +126,23 @@ async function callSeoul(operation, params, key) {
   return (data.msgBody && data.msgBody.itemList) || [];
 }
 
+async function callSeoulRoute(operation, params, key) {
+  const query = new URLSearchParams(Object.assign({ serviceKey: key, resultType: 'json' }, params));
+  const response = await fetch('http://ws.bus.go.kr/api/rest/busRouteInfo/' + operation + '?' + query.toString());
+  if (!response.ok) throw new Error('서울 노선 HTTP ' + response.status);
+  const data = await response.json();
+  const header = data.msgHeader || {};
+  if (header.headerCd !== '0' && header.headerCd !== '4') throw new Error(header.headerMsg || '서울 노선 API 오류');
+  return (data.msgBody && data.msgBody.itemList) || [];
+}
+
 // 서울 노선 종류: 1 공항, 2 마을, 3 간선, 4 지선, 5 순환, 6 광역, 7 인천, 8 경기
 function fromSeoul(b) {
   const last1 = b.isLast1 === '1' || /\[막차\]/.test(b.arrmsg1 || '');
   return {
     route: b.rtNm,
+    routeId: String(b.busRouteId),
+    order: Number(b.staOrd),  // 이 정류장이 노선에서 몇 번째인지
     type: 'S' + b.routeType,
     direction: b.adirection,
     nextStation: (b.nxtStn || '').trim(),
@@ -163,6 +193,8 @@ async function callGG(operation, params, key, listName) {
 function fromGG(b) {
   return {
     route: String(b.routeName),
+    routeId: String(b.routeId),
+    order: Number(b.staOrder), // 이 정류장이 노선에서 몇 번째인지
     type: 'G' + b.routeTypeCd,
     direction: b.routeDestName,
     nextStation: '',

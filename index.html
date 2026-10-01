@@ -136,6 +136,27 @@
       width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
       border: none; background: var(--bg); color: var(--text); font-size: 16px; cursor: pointer;
     }
+    .dest-form { display: flex; gap: 6px; padding: 4px 16px 8px; }
+    #stop-panel.waiting .dest-form, #stop-panel.waiting .dest-info { display: none; }
+    .dest-form input {
+      flex: 1; min-width: 0; padding: 8px 12px; font-size: 0.95rem;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text);
+    }
+    .dest-form button { padding: 8px 12px; border: none; border-radius: 8px; background: var(--accent); color: #fff; font-size: 0.9rem; cursor: pointer; }
+    .dest-info { display: flex; align-items: center; gap: 8px; margin: 0 16px 10px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 0.85rem; }
+    .dest-info[hidden] { display: none; }
+    .dest-info .text { flex: 1; min-width: 0; }
+    .dest-info .text small { display: block; color: var(--muted); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dest-info button { border: none; background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
+    .dest-line { grid-column: 2 / -1; font-size: 0.8rem; color: var(--accent); font-weight: 600; }
+    .dest-line.checking { color: var(--muted); font-weight: 400; }
+    .others-toggle { display: block; width: 100%; padding: 12px 16px; border: none; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--muted); font-size: 0.85rem; cursor: pointer; text-align: left; }
+    .wait-dest { margin-top: 6px; font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+    .wait-dest[hidden] { display: none; }
+    .dest-flag {
+      padding: 4px 8px; border-radius: 12px; background: #1f1f1f; color: #fff;
+      font-size: 12px; font-weight: 700; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+    }
     .sp-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 10px; font-size: 0.8rem; color: var(--muted); }
     .sp-refresh { border: 1px solid var(--line); background: var(--surface); color: var(--accent); border-radius: 14px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer; }
     .sp-list { flex: 1; overflow-y: auto; border-top: 1px solid var(--line); }
@@ -325,6 +346,11 @@
         </div>
         <button type="button" class="sp-close" aria-label="닫기">✕</button>
       </div>
+      <form class="dest-form" autocomplete="off">
+        <input type="search" placeholder="어디 가세요? (예: 노원역)" aria-label="목적지">
+        <button type="submit">찾기</button>
+      </form>
+      <div class="dest-info" hidden></div>
       <div class="sp-bar">
         <span class="sp-updated"></span>
         <button type="button" class="sp-refresh">↻ 새로고침</button>
@@ -334,6 +360,7 @@
         <div class="wait-top">
           <button type="button" class="wait-back">← 다른 버스 고르기</button>
           <div class="wait-bus"></div>
+          <div class="wait-dest" hidden></div>
           <div class="wait-clock"><span class="label">버스 오기까지</span><span class="big"></span><span class="sec"></span></div>
           <div class="wait-free"></div>
           <div class="wait-manual">
@@ -1072,6 +1099,8 @@
       exitWait();
       stop.position = position;
       selectedStop = stop;
+      lastBuses = []; // 다른 정류장 버스가 잠깐이라도 보이지 않게
+      showOthers = false;
       infowindow.close();
       spName.textContent = stop.name;
       spSub.textContent = stopLabel(stop, '');
@@ -1164,9 +1193,172 @@
           a.route.localeCompare(b.route, 'ko', { numeric: true });
       });
 
-      spList.innerHTML = '';
-      buses.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+      lastBuses = buses;
+      checkTrips(stop, buses);
       if (waitState && waitState.stop === stop) updateWaitFromBuses(buses); // 기다리는 중이면 남은 시간도 새로
+    }
+    var lastBuses = [];
+
+    // 버스 목록 그리기. 목적지가 있으면 목적지 가는 버스만 위에, 나머지는 접어 둬요
+    function renderBusList(stop, buses) {
+      spList.innerHTML = '';
+      if (!destination) {
+        buses.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+        return;
+      }
+      // 같은 노선이 양쪽 방향으로 서면 반대 방향도 "종점 돌아서 간다"로 나와요 → 정거장이 가장 적은 방향만 남겨요
+      var fewest = {};
+      buses.forEach(function (b) {
+        var t = tripOf(b);
+        if (t && t.ok && (!fewest[b.routeId] || t.stops < fewest[b.routeId])) fewest[b.routeId] = t.stops;
+      });
+      function goes(b) {
+        var t = tripOf(b);
+        return !!t && t.ok && t.stops <= MAX_STOPS && t.stops === fewest[b.routeId];
+      }
+      var going = buses.filter(goes);
+      var checking = buses.filter(function (b) { return !tripOf(b); });
+      var others = buses.filter(function (b) { return tripOf(b) && !goes(b); });
+
+      going.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+      checking.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+      if (going.length === 0 && checking.length === 0) {
+        var none = document.createElement('div');
+        none.className = 'sp-message';
+        none.textContent = '이 정류장에서 ' + destination.label + '까지 한 번에 가는 버스가 없어요. 근처 다른 정류장을 눌러 보세요.';
+        spList.appendChild(none);
+      }
+      if (others.length > 0) {
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'others-toggle';
+        toggle.textContent = (showOthers ? '▲ ' : '▼ ') + destination.label + '에 안 가는 버스 ' + others.length + '개 ' + (showOthers ? '접기' : '보기');
+        toggle.addEventListener('click', function () { showOthers = !showOthers; renderBusList(stop, buses); });
+        spList.appendChild(toggle);
+        if (showOthers) others.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+      }
+      updateDestInfo(going.length, checking.length > 0);
+    }
+    var showOthers = false;
+
+    // ───────── 목적지까지 가는 버스 찾기 ─────────
+    // 목적지 위치를 카카오에서 찾고, 이 정류장 버스마다 "다음 정류장들 중 목적지 500m 안에 서는 곳"이 있는지 노선 목록으로 확인해요
+    var DEST_RADIUS = 500;        // 목적지에서 이만큼 안의 정류장에 내리면 OK
+    var MIN_PER_STOP = 2;         // 한 정거장에 약 2분으로 탑승 시간을 어림해요
+    var MAX_STOPS = 35;           // 이보다 많이 가야 하면 너무 돌아가는 거라 빼요
+    var destination = null;       // { label, name, address, position }
+    var destMarker = null;
+    var routeCache = {};          // 노선 ID → 정류장 목록 (Promise)
+    var trips = {};               // "노선ID:순서" → { ok, station, stops, walk }
+    var destForm = stopPanel.querySelector('.dest-form');
+    var destInput = destForm.querySelector('input');
+    var destInfo = stopPanel.querySelector('.dest-info');
+
+    destForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var text = destInput.value.trim();
+      if (!text || !selectedStop) return;
+      destInput.blur(); // 휴대폰 키보드 내리기
+      places.keywordSearch(text, function (data, status) {
+        if (status !== kakao.maps.services.Status.OK) {
+          destInfo.hidden = false;
+          destInfo.innerHTML = '';
+          addLine(destInfo, 'text', '"' + text + '"을(를) 찾지 못했어요. 다른 이름으로 해 보세요.');
+          return;
+        }
+        var top = data[0];
+        setDestination({
+          label: text, name: top.place_name,
+          address: top.road_address_name || top.address_name,
+          position: new kakao.maps.LatLng(top.y, top.x)
+        });
+      }, { location: selectedStop.position }); // 같은 이름이 여러 곳이면 이 정류장에서 가까운 곳 먼저
+    });
+
+    function setDestination(dest) {
+      destination = dest;
+      trips = {};
+      showOthers = false;
+      if (destMarker) destMarker.setMap(null);
+      destMarker = null;
+      if (dest) {
+        var flag = document.createElement('div');
+        flag.className = 'dest-flag';
+        flag.textContent = '🏁 ' + dest.label;
+        destMarker = new kakao.maps.CustomOverlay({ position: dest.position, content: flag, yAnchor: 1.4, zIndex: 4 });
+        destMarker.setMap(map);
+      } else {
+        destInput.value = '';
+        destInfo.hidden = true;
+      }
+      if (selectedStop) checkTrips(selectedStop, lastBuses);
+    }
+
+    function updateDestInfo(goingCount, stillChecking) {
+      if (!destination) return;
+      destInfo.hidden = false;
+      destInfo.innerHTML = '';
+      var text = document.createElement('div');
+      text.className = 'text';
+      text.textContent = '🏁 ' + destination.label + (stillChecking ? ' · 가는 버스 확인 중…' : ' · 한 번에 가는 버스 ' + goingCount + '개');
+      var where = document.createElement('small');
+      where.textContent = destination.name + ' · ' + destination.address; // 어느 장소로 찾았는지 보여줘요
+      text.appendChild(where);
+      destInfo.appendChild(text);
+      var clear = document.createElement('button');
+      clear.type = 'button';
+      clear.textContent = '지우기';
+      clear.addEventListener('click', function () { setDestination(null); });
+      destInfo.appendChild(clear);
+    }
+
+    function tripKey(bus) { return bus.routeId + ':' + bus.order; }
+    function tripOf(bus) { return trips[tripKey(bus)]; }
+
+    // 이 정류장 버스들이 목적지에 가는지 노선별로 확인 (확인되는 대로 목록을 다시 그려요)
+    function checkTrips(stop, buses) {
+      renderBusList(stop, buses);
+      if (!destination) return;
+      var dest = destination;
+      buses.forEach(function (bus) {
+        if (tripOf(bus) || !bus.routeId) return;
+        routeStations(bus.routeId).then(function (stations) {
+          if (destination !== dest) return; // 그 사이 목적지를 바꿨으면 버려요
+          trips[tripKey(bus)] = findAlight(stations, bus.order, dest.position);
+          if (selectedStop === stop) renderBusList(stop, lastBuses);
+        });
+      });
+    }
+
+    function routeStations(routeId) {
+      if (!routeCache[routeId]) {
+        routeCache[routeId] = fetch('/api/bus?type=route&routeId=' + routeId)
+          .then(function (r) { return r.json(); })
+          .then(function (data) { return data.stations || []; })
+          .catch(function () { delete routeCache[routeId]; return []; });
+      }
+      return routeCache[routeId];
+    }
+
+    // 이 정류장(order번째) 다음 정류장들 중 목적지 500m 안에 처음 들어오는 곳 → 그 근처에서 목적지에 가장 가까운 곳에서 내려요
+    function findAlight(stations, order, destPos) {
+      var after = stations.filter(function (s) { return s.seq > order; });
+      for (var i = 0; i < after.length; i++) {
+        var d = distanceMeters(new kakao.maps.LatLng(after[i].lat, after[i].lng), destPos);
+        if (d > DEST_RADIUS) continue;
+        var best = { station: after[i], dist: d, idx: i };
+        for (var j = i + 1; j < after.length; j++) { // 계속 가까워지는 동안은 다음 정류장이 더 좋아요
+          var dj = distanceMeters(new kakao.maps.LatLng(after[j].lat, after[j].lng), destPos);
+          if (dj >= best.dist) break;
+          best = { station: after[j], dist: dj, idx: j };
+        }
+        return { ok: true, station: best.station, stops: best.idx + 1, walk: Math.max(1, Math.ceil(best.dist * DETOUR / WALK_M_PER_MIN)) };
+      }
+      return { ok: false };
+    }
+
+    function tripText(trip) {
+      return '→ ' + trip.station.name + ' 하차 · ' + trip.stops + '정거장(약 ' + trip.stops * MIN_PER_STOP + '분) · 내려서 걸어서 ' + trip.walk + '분';
     }
 
     // 정류장 설명: "정류장 번호 11283 · 석계역굴다리앞 방면" / "경기 수원 · 정류장 번호 03165"
@@ -1251,6 +1443,11 @@
       if (arr.ended && bus.firstTime) addBadge(badges, '', '첫차 ' + bus.firstTime);
       if (!arr.ended) addBadge(badges, 'go', '기다리며 다녀올 곳 ›');
       row.appendChild(badges);
+      if (destination) {
+        var trip = tripOf(bus);
+        if (!trip) addLine(row, 'dest-line checking', destination.label + '까지 가는지 확인 중…');
+        else if (trip.ok && trip.stops <= MAX_STOPS) addLine(row, 'dest-line', tripText(trip));
+      }
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       row.addEventListener('click', function () { enterWait(selectedStop, bus); });
@@ -1463,6 +1660,11 @@
       var dir = document.createElement('span');
       dir.textContent = (type.name ? type.name + ' · ' : '') + bus.direction + '행';
       waitBusEl.appendChild(dir);
+
+      var waitDest = waitView.querySelector('.wait-dest');
+      var trip = destination && tripOf(bus);
+      waitDest.hidden = !(trip && trip.ok);
+      if (trip && trip.ok) waitDest.textContent = '🏁 ' + destination.label + ' ' + tripText(trip);
 
       stopPanel.classList.add('waiting');
       waitView.hidden = false;
