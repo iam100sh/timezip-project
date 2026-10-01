@@ -167,6 +167,9 @@
     .wait-manual button[hidden] { display: none; }
     .wait-filters { display: flex; gap: 6px; overflow-x: auto; padding: 0 16px 10px; scrollbar-width: none; }
     .wait-filters::-webkit-scrollbar { display: none; }
+    .wait-subfilters { padding-top: 0; }
+    .wait-subfilters[hidden] { display: none; }
+    .wait-subfilters button { font-size: 0.78rem; padding: 4px 10px; }
     .wait-filters button {
       flex-shrink: 0; padding: 5px 11px; border-radius: 14px; font-size: 0.85rem; cursor: pointer;
       border: 1px solid var(--line); background: var(--surface); color: var(--text);
@@ -335,11 +338,12 @@
           <div class="wait-free"></div>
           <div class="wait-manual">
             <span>시간 직접 정하기</span>
-            <input type="range" min="3" max="40" step="1" value="10" aria-label="남은 시간 직접 정하기(분)">
+            <input type="range" min="3" max="60" step="1" value="10" aria-label="남은 시간 직접 정하기(분)">
             <button type="button" class="wait-live" hidden>실시간으로</button>
           </div>
         </div>
         <div class="wait-filters"></div>
+        <div class="wait-filters wait-subfilters" hidden></div>
         <div class="wait-count"></div>
         <div class="wait-list"></div>
       </div>
@@ -1276,13 +1280,82 @@
     var WALK_M_PER_MIN = 67;     // 걷는 속도 (시속 4km)
     var DETOUR = 1.3;            // 직선거리보다 실제 길이 이만큼 더 길다고 봐요
     var MAX_RADIUS = 1000;       // 아무리 시간이 많아도 정류장에서 1km 안에서만
-    var ACTIVITIES = [           // 업종별로 머무는 시간 추정 (분)
-      { code: 'CS2', label: '편의점', stay: 3, color: '#2f9e44' },
-      { code: 'CE7', label: '카페', stay: 5, color: '#9c6644' },
-      { code: 'PM9', label: '약국', stay: 5, color: '#e03131' },
-      { code: 'MT1', label: '마트', stay: 10, color: '#1c7ed6' },
-      { code: 'FD6', label: '음식점', stay: 20, color: '#e8590c' }
+    // 큰 분류 → 세부 분류 (stay = 머무는 시간 추정, 분)
+    var GROUPS = [
+      { id: 'food', label: '먹거리', color: '#e8590c', subs: [
+        { id: 'cafe', label: '카페', stay: 5 },
+        { id: 'bakery', label: '빵·디저트', stay: 5 },
+        { id: 'fastfood', label: '패스트푸드', stay: 10 },
+        { id: 'snack', label: '분식', stay: 15 },
+        { id: 'meal', label: '식사', stay: 20 }
+      ] },
+      { id: 'shop', label: '쇼핑', color: '#1c7ed6', subs: [
+        { id: 'daiso', label: '다이소', stay: 10 },
+        { id: 'book', label: '서점', stay: 10 },
+        { id: 'clothes', label: '옷가게', stay: 10 },
+        { id: 'stationery', label: '문구', stay: 7 }
+      ] },
+      { id: 'beauty', label: '뷰티', color: '#d6336c', subs: [
+        { id: 'cosmetics', label: '화장품', stay: 10 },
+        { id: 'hair', label: '미용실', stay: 30, note: '커트 기준' }
+      ] },
+      { id: 'life', label: '생활', color: '#2f9e44', subs: [
+        { id: 'cvs', label: '편의점', stay: 3 },
+        { id: 'pharmacy', label: '약국', stay: 5 },
+        { id: 'bank', label: '은행·ATM', stay: 5 },
+        { id: 'mart', label: '마트', stay: 10 }
+      ] },
+      { id: 'play', label: '놀거리', color: '#7048e8', subs: [
+        { id: 'arcade', label: '오락실', stay: 10 },
+        { id: 'photo', label: '셀프사진', stay: 10 },
+        { id: 'coinsing', label: '코인노래방', stay: 15 },
+        { id: 'pc', label: 'PC방', stay: 20 },
+        { id: 'comic', label: '보드·만화카페', stay: 30 }
+      ] }
     ];
+    var SUBS = {}; // 세부 id → { 세부 정보 + 큰 분류 }
+    GROUPS.forEach(function (g) { g.subs.forEach(function (sub) { sub.group = g; SUBS[sub.id] = sub; }); });
+
+    // 어디서 찾을지: 카카오 분류(category) 또는 키워드(keyword). classify가 업종 이름을 보고 세부 분류를 정해요 (null이면 버려요)
+    function cat(p) { return p.category_name || ''; }
+    var SOURCES = [
+      { category: 'CE7', classify: function (p) {
+        if (/키즈카페/.test(cat(p))) return null;
+        if (/보드카페|만화카페|방탈출/.test(cat(p))) return 'comic';
+        if (/디저트|제과|베이커리|아이스크림|도넛/.test(cat(p))) return 'bakery';
+        return 'cafe';
+      } },
+      { category: 'FD6', classify: function (p) {
+        if (/술집|포장마차|호프|바\(BAR\)|와인/.test(cat(p))) return null; // 버스 기다리며 가기엔 안 맞아서 빼요
+        if (/제과|베이커리|디저트|아이스크림|도넛|떡,한과/.test(cat(p))) return 'bakery';
+        if (/패스트푸드|햄버거|샌드위치|토스트/.test(cat(p))) return 'fastfood';
+        if (/분식/.test(cat(p))) return 'snack';
+        return 'meal';
+      } },
+      { category: 'CS2', sub: 'cvs' },
+      { category: 'PM9', sub: 'pharmacy' },
+      { category: 'BK9', sub: 'bank' },
+      { category: 'MT1', sub: 'mart' },
+      { keyword: '다이소', sub: 'daiso', match: function (p) { return /다이소/.test(p.place_name); } },
+      { keyword: '서점', sub: 'book', match: function (p) { return /서점/.test(cat(p)); } },
+      { keyword: '옷가게', sub: 'clothes', match: function (p) { return /의류판매/.test(cat(p)); } },
+      { keyword: '문구', sub: 'stationery', match: function (p) { return /문구,사무용품/.test(cat(p)) && !/제조업/.test(cat(p)); } },
+      { keyword: '올리브영', sub: 'cosmetics', match: function (p) { return /화장품|드럭스토어/.test(cat(p)); } },
+      { keyword: '화장품', sub: 'cosmetics', match: function (p) { return /미용 > 화장품/.test(cat(p)) && !/지사|본사|사무소|대리점/.test(p.place_name); } },
+      { keyword: '미용실', sub: 'hair', match: function (p) { return /미용실/.test(cat(p)); } },
+      { keyword: '오락실', sub: 'arcade', match: function (p) { return /오락실|게임장|인형뽑기/.test(cat(p)); } },
+      { keyword: '인형뽑기', sub: 'arcade', match: function (p) { return /오락실|게임장|인형뽑기/.test(cat(p)); } },
+      { keyword: '즉석사진', sub: 'photo', match: function (p) { return /즉석사진/.test(cat(p)); } },
+      { keyword: '인생네컷', sub: 'photo', match: function (p) { return /즉석사진/.test(cat(p)); } },
+      { keyword: '코인노래방', sub: 'coinsing', match: function (p) { return /노래방/.test(cat(p)); } },
+      { keyword: 'PC방', sub: 'pc', match: function (p) { return /PC방/.test(cat(p)); } },
+      { keyword: '만화카페', sub: 'comic', match: function (p) { return /만화|보드카페/.test(cat(p)); } }
+    ];
+    // 각 검색에서 나올 수 있는 세부 분류 중 가장 짧은 머무는 시간 → 이걸로 검색 반경을 정해요
+    SOURCES.forEach(function (src) {
+      var ids = src.sub ? [src.sub] : ['cafe', 'bakery', 'fastfood', 'snack', 'meal', 'comic'];
+      src.minStay = Math.min.apply(null, ids.map(function (id) { return SUBS[id].stay; }));
+    });
 
     var waitView = stopPanel.querySelector('.wait-view');
     var waitBusEl = waitView.querySelector('.wait-bus');
@@ -1316,22 +1389,55 @@
       tickWait(true);
     });
 
-    // 분류 버튼: 전체 + 업종별
-    [{ code: 'all', label: '전체' }].concat(ACTIVITIES).forEach(function (a) {
+    // 분류 버튼: 큰 분류 줄 + (큰 분류를 고르면) 세부 분류 줄
+    var waitSubFilters = waitView.querySelector('.wait-subfilters');
+    function makeFilterButton(label, color, onClick) {
       var b = document.createElement('button');
       b.type = 'button';
-      b.textContent = a.label;
-      b.dataset.code = a.code;
-      if (a.color) b.style.setProperty('--tag', a.color); // 고르면 그 분류 색으로
-      if (a.code === 'all') b.classList.add('on');
-      b.addEventListener('click', function () {
-        if (!waitState) return;
-        waitState.filter = a.code;
-        waitFilters.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
-        renderWaitList();
+      b.textContent = label;
+      if (color) b.style.setProperty('--tag', color); // 고르면 그 분류 색으로
+      b.addEventListener('click', onClick);
+      return b;
+    }
+    function setOn(container, button) {
+      container.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === button); });
+    }
+    function buildGroupFilters() {
+      waitFilters.innerHTML = '';
+      var all = makeFilterButton('전체', null, function () { pickGroup('all', all); });
+      all.classList.add('on');
+      waitFilters.appendChild(all);
+      GROUPS.forEach(function (g) {
+        var b = makeFilterButton(g.label, g.color, function () { pickGroup(g.id, b); });
+        waitFilters.appendChild(b);
       });
-      waitFilters.appendChild(b);
-    });
+      waitSubFilters.hidden = true;
+    }
+    function pickGroup(groupId, button) {
+      if (!waitState) return;
+      waitState.group = groupId;
+      waitState.sub = 'all';
+      setOn(waitFilters, button);
+      waitSubFilters.innerHTML = '';
+      var group = GROUPS.filter(function (g) { return g.id === groupId; })[0];
+      waitSubFilters.hidden = !group;
+      if (group) {
+        var all = makeFilterButton('전체 ' + group.label, group.color, function () { pickSub('all', all); });
+        all.classList.add('on');
+        waitSubFilters.appendChild(all);
+        group.subs.forEach(function (sub) {
+          var b = makeFilterButton(sub.label, group.color, function () { pickSub(sub.id, b); });
+          waitSubFilters.appendChild(b);
+        });
+      }
+      renderWaitList();
+    }
+    function pickSub(subId, button) {
+      if (!waitState) return;
+      waitState.sub = subId;
+      setOn(waitSubFilters, button);
+      renderWaitList();
+    }
 
     function enterWait(stop, bus) {
       if (!stop) return;
@@ -1340,9 +1446,9 @@
       waitState = {
         stop: stop, bus: bus, liveEndAt: liveEndAt, manual: !liveEndAt,
         endAt: liveEndAt || Date.now() + (Number(waitSlider.value) + BUFFER_MIN) * 60000,
-        places: [], fetchedFor: 0, filter: 'all', lastMinute: null
+        places: [], fetchedFor: 0, group: 'all', sub: 'all', lastMinute: null
       };
-      waitFilters.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x.dataset.code === 'all'); });
+      buildGroupFilters();
       waitLiveButton.hidden = true;
 
       // 버스 표시
@@ -1420,7 +1526,7 @@
 
       if (!force && freeMin === waitState.lastMinute) return;
       waitState.lastMinute = freeMin;
-      if (!waitState.manual) waitSlider.value = Math.min(40, Math.max(3, freeMin));
+      if (!waitState.manual) waitSlider.value = Math.min(60, Math.max(3, freeMin));
 
       // 처음이거나 시간이 늘어나서 더 멀리 찾아야 하면 다시 검색, 아니면 있는 결과에서 거르기만
       if (freeMin > waitState.fetchedFor) fetchWaitPlaces(freeMin);
@@ -1432,19 +1538,24 @@
       var state = waitState;
       state.fetchedFor = freeMin;
       waitCount.textContent = '다녀올 수 있는 곳을 찾는 중…';
-      var jobs = ACTIVITIES.map(function (a) {
-        var radius = maxOneWayMeters(freeMin, a.stay);
+      var jobs = SOURCES.map(function (src) {
+        var radius = maxOneWayMeters(freeMin, src.minStay);
         if (radius < 30) return Promise.resolve([]);
+        var query = src.category ? { category: src.category } : src.keyword;
         return new Promise(function (resolve) {
-          fetchAllPages({ category: a.code }, { location: state.stop.position, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE }, function (list) {
-            list.forEach(function (p) { p._activity = a; });
-            resolve(list);
+          fetchAllPages(query, { location: state.stop.position, radius: radius, sort: kakao.maps.services.SortBy.DISTANCE }, function (list) {
+            resolve(list.map(function (p) {
+              var subId = src.classify ? src.classify(p) : (!src.match || src.match(p) ? src.sub : null);
+              return subId ? { place: p, sub: SUBS[subId] } : null;
+            }).filter(Boolean));
           });
         });
       });
       Promise.all(jobs).then(function (lists) {
         if (waitState !== state) return; // 그 사이 다른 버스를 골랐으면 버려요
-        state.places = [].concat.apply([], lists);
+        var byId = {}; // 여러 검색에 같은 가게가 나오면 하나만 (먼저 찾은 분류로)
+        [].concat.apply([], lists).forEach(function (x) { if (!byId[x.place.id]) byId[x.place.id] = x; });
+        state.places = Object.keys(byId).map(function (id) { return byId[id]; });
         renderWaitList();
       });
     }
@@ -1463,13 +1574,16 @@
       if (!waitState) return;
       var leftSec = (waitState.endAt - Date.now()) / 1000;
       var freeMin = Math.floor(leftSec / 60) - BUFFER_MIN;
-      var filter = waitState.filter;
+      var group = waitState.group;
+      var subId = waitState.sub;
 
-      var doable = waitState.places.map(function (p) {
-        var walk = walkMinutesFromStop(p);
-        return { place: p, walk: walk, stay: p._activity.stay, total: walk * 2 + p._activity.stay };
+      var doable = waitState.places.map(function (x) {
+        var walk = walkMinutesFromStop(x.place);
+        return { place: x.place, sub: x.sub, walk: walk, stay: x.sub.stay, total: walk * 2 + x.sub.stay };
       }).filter(function (x) {
-        return x.total <= freeMin && (filter === 'all' || x.place._activity.code === filter);
+        return x.total <= freeMin &&
+          (group === 'all' || x.sub.group.id === group) &&
+          (subId === 'all' || x.sub.id === subId);
       });
       doable.sort(function (a, b) { return a.total - b.total || Number(a.place.distance) - Number(b.place.distance); });
 
@@ -1498,21 +1612,21 @@
         head.className = 'w-head';
         var tag = document.createElement('span');
         tag.className = 'w-tag';
-        tag.style.background = p._activity.color;
-        tag.textContent = p._activity.label;
+        tag.style.background = x.sub.group.color; // 색은 큰 분류, 글자는 세부 분류
+        tag.textContent = x.sub.label;
         head.appendChild(tag);
         addLine(head, 'w-name', p.place_name);
         item.appendChild(head);
         var spare = freeMin - x.total;
         addLine(item, 'w-spare' + (spare <= 1 ? ' tight' : ''), spare === 0 ? '딱 맞아요' : '여유 ' + spare + '분');
         addLine(item, 'w-plan', '총 ' + x.total + '분 · 걸어서 ' + x.walk + '분');
-        item.title = '가는 ' + x.walk + '분 + 머무는 ' + x.stay + '분 + 오는 ' + x.walk + '분'; // 자세한 계산은 마우스를 올리면
+        item.title = '가는 ' + x.walk + '분 + 머무는 ' + x.stay + '분' + (x.sub.note ? '(' + x.sub.note + ')' : '') + ' + 오는 ' + x.walk + '분'; // 자세한 계산은 마우스를 올리면
         item.addEventListener('click', function () { focusWaitPlace(p); });
         waitList.appendChild(item);
 
         var marker = new kakao.maps.Marker({
           map: map, position: new kakao.maps.LatLng(p.y, p.x), title: p.place_name,
-          image: pinImage(p._activity.color) // 목록 태그와 같은 카테고리 색
+          image: pinImage(x.sub.group.color) // 목록 태그와 같은 큰 분류 색
         });
         var focus = function () { focusWaitPlace(p); };
         kakao.maps.event.addListener(marker, 'click', focus);
