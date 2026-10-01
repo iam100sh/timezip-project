@@ -159,6 +159,8 @@
     .badge.last { color: #e5484d; }
     .badge.low { color: var(--accent); }
     .badge.crowded { color: #e5484d; }
+    .badge.seats { color: #30a46c; }
+    .badge.seats.few { color: #d97706; }
     .arr { grid-column: 3; grid-row: 1; text-align: right; font-size: 1.3rem; font-weight: 700; white-space: nowrap; letter-spacing: -0.02em; }
     .arr.soon { color: #e5484d; }
     .arr.wait { font-size: 0.95rem; font-weight: 600; color: var(--muted); }
@@ -860,17 +862,35 @@
     var stopOverlays = [];
     var stopsRequest = 0;
 
-    var ROUTE_TYPES = { // 서울 버스 종류별 이름과 색
-      '1': { name: '공항', color: '#00a0e9' },
-      '2': { name: '마을', color: '#5bb025' },
-      '3': { name: '간선', color: '#0068b7' },
-      '4': { name: '지선', color: '#53b332' },
-      '5': { name: '순환', color: '#f2b70a' },
-      '6': { name: '광역', color: '#e60012' },
-      '7': { name: '인천', color: '#8a8a8a' },
-      '8': { name: '경기', color: '#8a8a8a' }
+    // 버스 종류별 이름과 색 (S = 서울 노선 종류, G = 경기 노선 종류 코드)
+    var ROUTE_TYPES = {
+      S1: { name: '공항', color: '#00a0e9' },
+      S2: { name: '마을', color: '#5bb025' },
+      S3: { name: '간선', color: '#0068b7' },
+      S4: { name: '지선', color: '#53b332' },
+      S5: { name: '순환', color: '#f2b70a', text: '#1f1f1f' },
+      S6: { name: '광역', color: '#e60012' },
+      S7: { name: '인천', color: '#8a8a8a' },
+      S8: { name: '경기', color: '#8a8a8a' },
+      G11: { name: '직행좌석', color: '#e60012' },
+      G12: { name: '좌석', color: '#0075c8' },
+      G13: { name: '일반', color: '#33a23d' },
+      G14: { name: '광역급행', color: '#00a0e9' },
+      G15: { name: '따복', color: '#f99d1c' },
+      G16: { name: '순환', color: '#f2b70a', text: '#1f1f1f' },
+      G21: { name: '직행좌석', color: '#e60012' },
+      G22: { name: '좌석', color: '#0075c8' },
+      G23: { name: '일반', color: '#33a23d' },
+      G30: { name: '마을', color: '#f2b70a', text: '#1f1f1f' },
+      G41: { name: '고속', color: '#7c5cd6' },
+      G42: { name: '시외', color: '#7c5cd6' },
+      G43: { name: '시외', color: '#7c5cd6' },
+      G51: { name: '공항', color: '#00a0e9' },
+      G52: { name: '공항', color: '#00a0e9' },
+      G53: { name: '공항', color: '#00a0e9' }
     };
-    var ROUTE_ORDER = ['3', '4', '5', '6', '2', '1', '8', '7']; // 목록 정렬 순서
+    // 같은 시간에 오면 이 순서로 (모르는 종류는 맨 뒤)
+    var ROUTE_ORDER = ['S3', 'S4', 'S5', 'S6', 'S2', 'S1', 'G11', 'G14', 'G12', 'G13', 'G16', 'G15', 'G30', 'G21', 'G22', 'G23', 'G41', 'G42', 'G43', 'G51', 'G52', 'G53', 'S8', 'S7'];
 
     busToggle.addEventListener('click', function () {
       busOn = !busOn;
@@ -920,8 +940,8 @@
 
     function addStop(stop) {
       var el = document.createElement('div');
-      el.className = 'bus-stop' + (selectedStop && selectedStop.arsId === stop.arsId ? ' selected' : '');
-      el.dataset.arsId = stop.arsId;
+      el.className = 'bus-stop' + (selectedStop && selectedStop.id === stop.id ? ' selected' : '');
+      el.dataset.id = stop.id;
       el.title = stop.name;
       el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="4" y="3" width="16" height="15" rx="3"/><path d="M4 11h16M8 21v-3M16 21v-3"/></svg>';
       var position = new kakao.maps.LatLng(stop.lat, stop.lng);
@@ -978,7 +998,7 @@
       selectedStop = stop;
       infowindow.close();
       spName.textContent = stop.name;
-      spSub.textContent = '정류장 번호 ' + stop.arsId;
+      spSub.textContent = stopLabel(stop, '');
       spUpdated.textContent = '';
       spList.innerHTML = '<div class="sp-message">버스 정보를 불러오는 중…</div>';
 
@@ -1016,7 +1036,7 @@
     function highlightStop() {
       stopOverlays.forEach(function (o) {
         var el = o.getContent();
-        el.classList.toggle('selected', !!selectedStop && el.dataset.arsId === selectedStop.arsId);
+        el.classList.toggle('selected', !!selectedStop && el.dataset.id === selectedStop.id);
       });
     }
 
@@ -1027,7 +1047,9 @@
     }
 
     function loadArrivals(stop) {
-      fetch('/api/bus?type=arrivals&arsId=' + stop.arsId)
+      // 서울 정류장은 서울 버스(+ 그곳에 서는 경기 버스), 경기 정류장은 경기 버스를 물어봐요
+      fetch('/api/bus?type=arrivals&id=' + stop.id + '&arsId=' + stop.arsId +
+        '&seoul=' + (stop.seoul ? 1 : 0) + '&gg=' + (stop.gg ? 1 : 0))
         .then(function (r) { return r.json(); })
         .then(function (data) {
           if (selectedStop !== stop) return; // 그 사이 다른 정류장을 눌렀으면 버려요
@@ -1055,10 +1077,10 @@
         if (next) counts[next] = (counts[next] || 0) + 1;
       });
       var towards = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
-      spSub.textContent = '정류장 번호 ' + stop.arsId + (towards ? ' · ' + towards + ' 방면' : '');
+      spSub.textContent = stopLabel(stop, towards);
 
       // 곧 오는 순 → 같으면 버스 종류 순 → 번호 순
-      buses.forEach(function (b) { b._arr = parseArrival(b.arrival1); });
+      buses.forEach(function (b) { b._arr = formatArrival(b.arr1); });
       buses.sort(function (a, b) {
         return (a._arr.order - b._arr.order) ||
           (routeRank(a) - routeRank(b)) ||
@@ -1069,32 +1091,36 @@
       buses.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
     }
 
-    // 도착 메시지 해석: "3분12초후[2번째 전]" → { main: "3분", sub: "2정거장 전", order: 192, soon: true }
-    function parseArrival(message) {
-      var text = (message || '').trim();
-      var last = /\[막차\]/.test(text);
-      text = text.replace('[막차]', '').trim();
-      var info = { main: text || '정보 없음', sub: '', order: 70000, soon: false, wait: true, ended: false, last: last };
+    // 정류장 설명: "정류장 번호 11283 · 석계역굴다리앞 방면" / "경기 수원 · 정류장 번호 03165"
+    function stopLabel(stop, towards) {
+      var parts = [];
+      if (stop.region && stop.region !== '서울') parts.push(stop.region === '경기' ? '경기' : '경기 ' + stop.region); // 예: "경기 수원"
+      if (stop.arsId) parts.push('정류장 번호 ' + stop.arsId);
+      if (towards) parts.push(towards + ' 방면');
+      return parts.join(' · ');
+    }
 
-      var m = text.match(/^(?:(\d+)분)?\s*(?:(\d+)초)?후\[(\d+)번째 전\]/);
-      if (m && (m[1] || m[2])) {
-        var minutes = Number(m[1] || 0);
-        var seconds = Number(m[2] || 0);
-        info.main = minutes === 0 ? '1분 이내' : minutes + '분';
-        info.sub = m[3] + '정거장 전';
-        info.order = minutes * 60 + seconds;
-        info.soon = minutes <= 3;
+    // 서버가 보낸 도착 정보 → 화면에 쓸 글자
+    //   { status: 'running', minutes: 3, stops: 2 } → { main: "3분", sub: "2정거장 전", order: 180, soon: true }
+    function formatArrival(arr) {
+      arr = arr || { status: 'none' };
+      var info = { main: '', sub: '', order: 60000, soon: false, wait: true, ended: false };
+      if (arr.status === 'running') {
+        info.main = arr.minutes === 0 ? '1분 이내' : arr.minutes + '분';
+        info.sub = arr.stops != null ? arr.stops + '정거장 전' : '';
+        info.order = arr.minutes * 60 + (arr.seconds || 0);
+        info.soon = arr.minutes <= 3;
         info.wait = false;
-      } else if (text.indexOf('곧 도착') !== -1) {
+      } else if (arr.status === 'soon') {
         info.main = '곧 도착'; info.order = 0; info.soon = true; info.wait = false;
-      } else if (text.indexOf('차고지') !== -1) {
+      } else if (arr.status === 'garage') {
         info.main = '차고지 출발'; info.order = 40000;
-      } else if (text.indexOf('출발대기') !== -1) {
+      } else if (arr.status === 'wait') {
         info.main = '출발 대기'; info.order = 50000;
-      } else if (text.indexOf('회차') !== -1) {
-        info.main = '회차 대기'; info.order = 50000;
-      } else if (text.indexOf('운행종료') !== -1) {
+      } else if (arr.status === 'ended') {
         info.main = '운행 종료'; info.order = 99999; info.ended = true;
+      } else {
+        info.main = arr.text || '도착 정보 없음'; info.order = 70000;
       }
       return info;
     }
@@ -1102,7 +1128,7 @@
     // 목록 정렬 순서 (종류를 모르는 노선은 맨 뒤로)
     function routeRank(bus) {
       if (/^N/.test(bus.route)) return ROUTE_ORDER.length; // 심야버스
-      var rank = ROUTE_ORDER.indexOf(bus.routeType);
+      var rank = ROUTE_ORDER.indexOf(bus.type);
       return rank === -1 ? ROUTE_ORDER.length + 1 : rank;
     }
 
@@ -1110,9 +1136,9 @@
     //                    막차 저상 혼잡     2정거장 전 · 다음 15분
     function buildBusRow(bus) {
       var type = /^N/.test(bus.route) ? { name: '심야', color: '#1f2a44' } // N13 같은 심야버스
-        : ROUTE_TYPES[bus.routeType] || { name: '', color: '#8a8a8a' };
-      var arr = bus._arr || parseArrival(bus.arrival1);
-      var next = parseArrival(bus.arrival2);
+        : ROUTE_TYPES[bus.type] || { name: '', color: '#8a8a8a' };
+      var arr = bus._arr || formatArrival(bus.arr1);
+      var next = formatArrival(bus.arr2);
 
       var row = document.createElement('div');
       row.className = 'bus-row' + (arr.ended ? ' ended' : '');
@@ -1120,6 +1146,7 @@
       var chip = document.createElement('div');
       chip.className = 'route-chip';
       chip.style.background = type.color;
+      if (type.text) chip.style.color = type.text; // 노란색 바탕은 글자를 진하게
       chip.textContent = bus.route;
       chip.title = (type.name ? type.name + '버스 ' : '') + bus.route;
       row.appendChild(chip);
@@ -1139,9 +1166,10 @@
 
       var badges = document.createElement('div');
       badges.className = 'bus-badges';
-      if (arr.last || bus.last1) addBadge(badges, 'last', '막차');
-      if (bus.lowFloor1 && !arr.ended) addBadge(badges, 'low', '저상');
-      if (bus.congestion1 === '5' && !arr.wait) addBadge(badges, 'crowded', '혼잡'); // 여유·보통은 대부분이라 혼잡할 때만 표시
+      if (bus.last1) addBadge(badges, 'last', '막차');
+      if (bus.lowFloor1 && !arr.wait) addBadge(badges, 'low', '저상');
+      if (bus.crowded1 && !arr.wait) addBadge(badges, 'crowded', '혼잡'); // 여유·보통은 대부분이라 혼잡할 때만 표시
+      if (bus.seats1 != null && !arr.wait) addBadge(badges, bus.seats1 <= 5 ? 'seats few' : 'seats', '빈자리 ' + bus.seats1); // 경기 좌석버스
       if (arr.ended && bus.firstTime) addBadge(badges, '', '첫차 ' + bus.firstTime);
       row.appendChild(badges);
 
@@ -1149,7 +1177,7 @@
       sub.className = 'arr-sub';
       var parts = [];
       if (arr.sub) parts.push(arr.sub);
-      if (!next.wait || (next.main && next.main !== arr.main && !next.ended)) parts.push('다음 ' + next.main);
+      if (!next.wait) parts.push('다음 ' + next.main); // 두 번째 버스는 오고 있을 때만
       sub.textContent = parts.join(' · ');
       row.appendChild(sub);
       return row;
