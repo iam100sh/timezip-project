@@ -1,3 +1,5 @@
 dev-server.js
 .env
 .claude/
+.env.example
+README.md
