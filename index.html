@@ -298,6 +298,34 @@
     .wait-clock .big { font-size: 2.6rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
     .wait-clock .sec { font-size: 1rem; color: var(--muted); font-weight: 600; }
     .wait-free { margin-top: 6px; font-size: 0.95rem; }
+    .reminder {
+      display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+      background: var(--accent-soft); border: 1px solid var(--accent);
+    }
+    .reminder[hidden] { display: none; }
+    .reminder .rm-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .reminder .rm-title { font-size: 0.88rem; color: var(--text); }
+    .reminder .rm-left { font-size: 0.8rem; color: var(--accent); font-weight: 700; }
+    .reminder.warn { background: #fff4e5; border-color: #f59e0b; }
+    .reminder.warn .rm-left { color: #b45309; }
+    .reminder.go { background: #fee2e2; border-color: #e5484d; }
+    .reminder.go .rm-left { color: #b42318; }
+    .rm-cancel { flex-shrink: 0; border: none; background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer; }
+    .remind-button {
+      display: block; width: 100%; margin-top: 8px; padding: 8px; border: none; border-radius: 8px;
+      background: #7C3AED; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    #leave-alert { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, 0.55); }
+    #leave-alert[hidden] { display: none; }
+    .la-box { width: 100%; max-width: 360px; padding: 24px 20px 18px; border-radius: 18px; background: var(--surface); color: var(--text); text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+    .la-icon { font-size: 44px; line-height: 1; animation: la-bounce 0.8s ease-in-out infinite alternate; }
+    @keyframes la-bounce { to { transform: translateY(-6px); } }
+    .la-box strong { display: block; margin-top: 10px; font-size: 1.25rem; }
+    .la-body { margin-top: 8px; font-size: 0.92rem; color: var(--muted); line-height: 1.5; }
+    .la-buttons { display: flex; gap: 8px; margin-top: 16px; }
+    .la-buttons a, .la-buttons button { flex: 1; padding: 11px; border-radius: 10px; font-size: 0.92rem; font-weight: 700; text-decoration: none; cursor: pointer; }
+    .la-route { border: 1px solid var(--accent); color: var(--accent); background: var(--surface); }
+    .la-ok { border: none; background: var(--accent); color: #fff; }
     .wait-free b { color: var(--accent); font-size: 1.15rem; }
     .wait-free.urgent b { color: #e5484d; }
     .wait-free small { color: var(--muted); }
@@ -517,6 +545,10 @@
           <div class="wait-dest" hidden></div>
           <div class="wait-clock"><span class="label">버스 오기까지</span><span class="big"></span><span class="sec"></span></div>
           <div class="wait-free"></div>
+          <div class="reminder" hidden>
+            <div class="rm-text"><b class="rm-title"></b><span class="rm-left"></span></div>
+            <button type="button" class="rm-cancel">취소</button>
+          </div>
           <div class="wait-manual">
             <span>시간 직접 정하기</span>
             <input type="range" min="3" max="60" step="1" value="10" aria-label="남은 시간 직접 정하기(분)">
@@ -530,6 +562,19 @@
       </div>
     </section>
   </main>
+
+  <!-- "이제 돌아가세요" 큰 안내 -->
+  <div id="leave-alert" hidden role="alertdialog" aria-labelledby="la-title">
+    <div class="la-box">
+      <div class="la-icon">🚶</div>
+      <strong id="la-title">지금 정류장으로 출발하세요!</strong>
+      <p class="la-body"></p>
+      <div class="la-buttons">
+        <a class="la-route" target="_blank" rel="noopener">돌아오는 길 보기</a>
+        <button type="button" class="la-ok">확인</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 가게 상세 창 (카카오맵 가게 페이지를 지도 위에) -->
   <section id="place-viewer" hidden aria-label="가게 상세 정보">
@@ -1917,6 +1962,7 @@
       waitView.hidden = true;
       clearWaitMarkers();
       clearWalkPath();
+      cancelReminder();
       infowindow.close();
     }
 
@@ -1942,6 +1988,7 @@
     // 1초마다: 시계를 바꾸고, 분이 바뀌면 목록도 다시 계산
     function tickWait(force) {
       if (!waitState) return;
+      updateReminder();
       var leftSec = Math.max(0, Math.round((waitState.endAt - Date.now()) / 1000));
       var freeMin = Math.floor(leftSec / 60) - BUFFER_MIN; // 다녀올 수 있는 시간 (분)
 
@@ -2092,6 +2139,15 @@
       real.className = 'walk-real';
       real.textContent = '🚶 실제 걷는 길 확인 중…';
       card.insertBefore(real, buttons);
+
+      // 🔔 여기 갈래요: 돌아갈 시각에 알려 주기 (돌아오는 시간은 실제 길을 받으면 그걸로 바꿔요)
+      var backMin = walkMinutesFromStop(place);
+      var remind = document.createElement('button');
+      remind.type = 'button';
+      remind.className = 'remind-button';
+      remind.textContent = '🔔 여기 갈래요 · 돌아갈 때 알려 주기';
+      remind.addEventListener('click', function () { startReminder(place, backMin); });
+      card.appendChild(remind);
       openInfoAt(card, new kakao.maps.LatLng(place.y, place.x));
 
       var entry = waitState.places.filter(function (x) { return x.place === place; })[0];
@@ -2102,6 +2158,8 @@
         if (!walk) { real.textContent = '🚶 실제 걷는 길을 가져오지 못했어요 (어림값으로 계산했어요)'; return; }
         drawWalkPath(walk.path);
         var oneWay = Math.max(1, Math.ceil(walk.seconds / 60));
+        backMin = oneWay;
+        if (reminder && reminder.place === place) reminder.backMin = oneWay; // 이미 알림을 걸었으면 실제 시간으로 고쳐요
         var total = oneWay * 2 + stay;
         var freeMin = Math.floor((waitState.endAt - Date.now()) / 60000) - BUFFER_MIN;
         var spare = freeMin - total;
@@ -2110,6 +2168,102 @@
         real.classList.toggle('short', spare < 0);
         infowindow.setContent(card); // 말풍선 크기 다시 맞추기
       });
+    }
+
+    // ───────── 🔔 "이제 돌아가세요" 알림 ─────────
+    // 출발할 시각 = 버스 도착 - 복귀 여유(2분) - 가게에서 정류장까지 걷는 시간
+    // 버스 도착 정보가 30초마다 바뀌면 출발 시각도 같이 바뀌어요. 1분 전에 미리 알리고, 그때가 되면 진동·소리·알림·큰 안내를 띄워요.
+    // (휴대폰 화면이 꺼져 있거나 다른 앱을 쓰면 브라우저가 멈춰서 늦게 알릴 수 있어요 → 이 페이지를 켜 두세요)
+    var reminder = null;          // { place, name, backMin, warned, fired, state }
+    var reminderBanner = waitView.querySelector('.reminder');
+    var leaveAlert = document.getElementById('leave-alert');
+    var audioCtx = null;
+
+    reminderBanner.querySelector('.rm-cancel').addEventListener('click', cancelReminder);
+    leaveAlert.querySelector('.la-ok').addEventListener('click', function () { leaveAlert.hidden = true; });
+
+    function startReminder(place, backMin) {
+      if (!waitState) return;
+      // 누르는 순간에만 소리 재생과 알림 권한 요청이 허락돼서 지금 준비해요
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.resume();
+      } catch (e) { audioCtx = null; }
+      if ('Notification' in window && Notification.permission === 'default') {
+        try { Notification.requestPermission(); } catch (e) { /* 지원 안 하는 브라우저 */ }
+      }
+      reminder = { place: place, name: place.place_name, backMin: backMin, warned: false, fired: false, state: waitState };
+      infowindow.close();
+      updateReminder();
+      showBusHint('🔔 돌아갈 시간이 되면 알려 드릴게요. 이 페이지를 켜 두세요', 4000);
+    }
+
+    function cancelReminder() {
+      reminder = null;
+      reminderBanner.hidden = true;
+      reminderBanner.classList.remove('warn', 'go');
+    }
+
+    function updateReminder() {
+      if (!reminder) return;
+      if (!waitState || reminder.state !== waitState) { cancelReminder(); return; }
+      var leaveAt = waitState.endAt - (BUFFER_MIN + reminder.backMin) * 60000;
+      var left = Math.round((leaveAt - Date.now()) / 1000);
+
+      reminderBanner.hidden = false;
+      reminderBanner.querySelector('.rm-title').textContent = '🔔 ' + reminder.name + ' 다녀오기 · ' + clockText(leaveAt) + '에 출발';
+      reminderBanner.querySelector('.rm-left').textContent = left > 0
+        ? Math.floor(left / 60) + '분 ' + (left % 60) + '초 뒤에 정류장으로 출발하세요 (걸어서 ' + reminder.backMin + '분)'
+        : '지금 정류장으로 출발하세요!';
+      reminderBanner.classList.toggle('warn', left > 0 && left <= 60);
+      reminderBanner.classList.toggle('go', left <= 0);
+
+      if (left <= 60 && left > 0 && !reminder.warned) { // 1분 전 미리 알림
+        reminder.warned = true;
+        vibrate([200]);
+        beep(1);
+      }
+      if (left <= 0 && !reminder.fired) {
+        reminder.fired = true;
+        fireLeaveAlert();
+      }
+    }
+
+    function fireLeaveAlert() {
+      var bus = waitState.bus;
+      var busMin = Math.max(0, Math.round((waitState.endAt - Date.now()) / 60000));
+      var body = bus.route + '번 버스가 약 ' + busMin + '분 뒤 도착해요 · ' + reminder.name + '에서 정류장까지 걸어서 ' + reminder.backMin + '분';
+      vibrate([400, 200, 400, 200, 400]);
+      beep(3);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification('🚶 지금 정류장으로 출발하세요', { body: body, tag: 'timezip-leave' }); } catch (e) { /* 일부 휴대폰은 페이지 알림을 막아요 */ }
+      }
+      var stop = waitState.stop;
+      leaveAlert.querySelector('.la-body').textContent = body;
+      leaveAlert.querySelector('.la-route').href = kakaoRouteUrl('walk', reminder.name,
+        new kakao.maps.LatLng(reminder.place.y, reminder.place.x), stop.name, stop.position);
+      leaveAlert.hidden = false;
+    }
+
+    function vibrate(pattern) {
+      try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* 아이폰은 진동을 지원하지 않아요 */ }
+    }
+
+    // "삐-" 소리 n번 (파일 없이 브라우저에서 바로 만들어요)
+    function beep(times) {
+      if (!audioCtx) return;
+      for (var i = 0; i < times; i++) {
+        var start = audioCtx.currentTime + i * 0.35;
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.25);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(start);
+        osc.stop(start + 0.27);
+      }
     }
 
     // 정류장 ↔ 가게 도보 경로 (TMAP, 하루 1,000건). 같은 구간은 다시 부르지 않아요
