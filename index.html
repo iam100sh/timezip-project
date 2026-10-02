@@ -284,6 +284,22 @@
     .arr.wait { font-size: 0.95rem; font-weight: 600; color: var(--muted); }
     .arr-sub { grid-column: 3; grid-row: 2; text-align: right; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 
+    /* 가게 상세 창: 컴퓨터는 오른쪽, 휴대폰은 아래에서 올라오는 창 */
+    #place-viewer {
+      position: fixed; z-index: 50; right: 16px; top: 72px; bottom: 16px; width: 400px; max-width: calc(100% - 32px);
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--surface); border-radius: 14px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+    }
+    #place-viewer[hidden] { display: none; }
+    .pv-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .pv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pv-open { flex-shrink: 0; font-size: 0.8rem; color: var(--accent); text-decoration: none; }
+    .pv-close { flex-shrink: 0; width: 30px; height: 30px; border: none; border-radius: 50%; background: var(--bg); color: var(--text); cursor: pointer; }
+    #place-viewer iframe { flex: 1; width: 100%; border: none; background: #fff; }
+    @media (max-width: 700px) {
+      #place-viewer { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; height: 88%; border-radius: 16px 16px 0 0; }
+    }
+
     /* 지도 위 내 위치 파란 점 */
     .my-dot {
       width: 16px; height: 16px; border-radius: 50%;
@@ -442,6 +458,16 @@
       </div>
     </section>
   </main>
+
+  <!-- 가게 상세 창 (카카오맵 가게 페이지를 지도 위에) -->
+  <section id="place-viewer" hidden aria-label="가게 상세 정보">
+    <div class="pv-head">
+      <strong class="pv-title"></strong>
+      <a class="pv-open" target="_blank" rel="noopener">카카오맵에서 열기 ↗</a>
+      <button type="button" class="pv-close" aria-label="닫기">✕</button>
+    </div>
+    <iframe title="카카오맵 가게 정보" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </section>
 
   <!-- Javascript API 불러오기 + services, clusterer 라이브러리 (&libraries=services,clusterer) -->
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=28e326bf94524ee99ed587b9b4d00150&libraries=services,clusterer"></script>
@@ -909,11 +935,39 @@
       if (place.id) { // 주소 검색 결과에는 가게 번호가 없어서 버튼을 안 보여줘요
         var buttons = document.createElement('div');
         buttons.className = 'buttons';
-        addLink(buttons, '상세보기', place.place_url.replace('http://', 'https://')); // 카카오맵 가게 페이지 (영업시간, 사진, 리뷰)
+        var detailUrl = place.place_url.replace('http://', 'https://');
+        var detail = document.createElement('a');
+        detail.href = detailUrl;
+        detail.textContent = '상세보기';
+        detail.addEventListener('click', function (e) { // 새 탭 대신 지도 위 창으로 (영업시간, 사진, 메뉴, 후기)
+          e.preventDefault();
+          openPlaceViewer(place.place_name, detailUrl);
+        });
+        buttons.appendChild(detail);
         addLink(buttons, '길찾기', 'https://map.kakao.com/link/to/' + place.id);   // 카카오맵 길찾기 (도착지로 설정)
         card.appendChild(buttons);
       }
       return card;
+    }
+
+    // ───────── 가게 상세 창 ─────────
+    // 카카오맵 가게 페이지를 지도 위 창 안에 띄워요. (카카오가 끼워 넣기를 막으면 "카카오맵에서 열기"로 볼 수 있어요)
+    var placeViewer = document.getElementById('place-viewer');
+    var placeViewerFrame = placeViewer.querySelector('iframe');
+    placeViewer.querySelector('.pv-close').addEventListener('click', closePlaceViewer);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePlaceViewer(); });
+
+    function openPlaceViewer(name, url) {
+      placeViewer.querySelector('.pv-title').textContent = name;
+      placeViewer.querySelector('.pv-open').href = url;
+      placeViewerFrame.src = url;
+      placeViewer.hidden = false;
+    }
+
+    function closePlaceViewer() {
+      if (placeViewer.hidden) return;
+      placeViewer.hidden = true;
+      placeViewerFrame.src = 'about:blank'; // 닫으면 페이지도 비워서 소리·데이터가 계속 쓰이지 않게
     }
 
     function addLink(parent, text, url) {
