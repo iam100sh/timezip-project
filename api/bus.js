@@ -7,6 +7,8 @@
 //       → 정류장을 지나는 버스와 도착 정보 (서울 버스 + 경기 버스)
 //   /api/bus?type=route&routeId=100100147
 //       → 노선이 지나는 정류장 목록 (순서대로). 목적지까지 가는 버스인지 확인할 때 써요
+//   /api/bus?type=routepath&routeId=100100147
+//       → 노선이 실제로 다니는 길 모양 [[경도, 위도], ...] (지도에 버스 경로 선을 그릴 때)
 //
 // 도착 정보는 서울/경기 모두 같은 모양으로 바꿔서 보내요:
 //   { status: 'running' | 'soon' | 'garage' | 'wait' | 'ended' | 'none', minutes, stops }
@@ -108,7 +110,23 @@ module.exports = async function handler(req, res) {
       return send(res, 200, { routeId: routeId, stations: stations }, 86400); // 노선은 거의 안 바뀌니 하루 캐시
     }
 
-    return send(res, 400, { error: 'type은 nearby, arrivals, route 중 하나예요.' });
+    if (type === 'routepath') {
+      const routeId = url.searchParams.get('routeId') || '';
+      if (!/^\d{6,12}$/.test(routeId)) return send(res, 400, { error: 'routeId(노선 ID)가 필요해요.' });
+      let path;
+      if (routeId.charAt(0) === '2') {
+        const items = await callGG('busrouteservice/v2/getBusRouteLineListv2', { routeId: routeId }, key, 'busRouteLineList');
+        items.sort((a, b) => a.lineSeq - b.lineSeq);
+        path = items.map((p) => [round6(p.x), round6(p.y)]);
+      } else {
+        const items = await callSeoulRoute('getRoutePath', { busRouteId: routeId }, key);
+        items.sort((a, b) => Number(a.no) - Number(b.no));
+        path = items.map((p) => [round6(p.gpsX), round6(p.gpsY)]);
+      }
+      return send(res, 200, { routeId: routeId, path: path }, 86400); // 노선 모양은 거의 안 바뀌니 하루 캐시
+    }
+
+    return send(res, 400, { error: 'type은 nearby, arrivals, route, routepath 중 하나예요.' });
   } catch (err) {
     return send(res, 502, { error: '버스 정보를 가져오지 못했어요.', detail: String(err.message || err) });
   }
@@ -245,6 +263,8 @@ function mergeBuses(seoulBuses, ggBuses) {
   });
   return result;
 }
+
+function round6(v) { return Math.round(Number(v) * 1e6) / 1e6; }
 
 // "0400  " → "04:00"
 function formatTime(value) {

@@ -87,6 +87,16 @@
     #results .trip-option .t-arrive { grid-column: 3; grid-row: 1; text-align: right; font-weight: 700; white-space: nowrap; }
     #results .trip-option .t-detail { grid-column: 2 / -1; font-size: 0.8rem; color: var(--muted); }
     #results .trip-option.later { opacity: 0.6; }
+    #results .trip-option.selected, .itinerary.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+    .t-actions { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 6px; }
+    .t-actions button { flex: 1; padding: 8px; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-size: 0.85rem; cursor: pointer; }
+    .it-show { margin-top: 6px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 0.78rem; cursor: pointer; }
+    .route-label {
+      display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
+      background: #fff; color: #1f1f1f; font-size: 12px; font-weight: 700; white-space: nowrap;
+      border: 1px solid #d5d5d5; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+    }
+    .route-label .tag { padding: 1px 5px; border-radius: 4px; color: #fff; font-size: 11px; }
     #results .trip-summary { display: block; cursor: default; background: var(--bg); }
     #results .trip-summary b { color: var(--text); }
     #results .trip-summary small { display: block; color: var(--muted); margin-top: 2px; }
@@ -861,6 +871,7 @@
     function clearMarkers() {
       closeStopPanel(); // 검색하면 버스 패널은 닫고 결과 목록을 보여줘요
       if (originFlag) { originFlag.setMap(null); originFlag = null; } // 버스 길찾기 출발 깃발도
+      clearRoute();
       clusterer.clear();
       markers = [];
       searchCircle.setMap(null);
@@ -2209,6 +2220,8 @@
     }
 
     function planTrip(origin, dest, thisRequest) {
+      lastTrip = { origin: origin, dest: dest };
+      clearRoute();
       // 지도: 출발 깃발 + 목적지 깃발, 출발지 쪽으로 이동 (정류장도 그 주변으로 다시 불러와요)
       if (originFlag) originFlag.setMap(null);
       var flag = document.createElement('div');
@@ -2357,14 +2370,159 @@
         addLine(li, 't-detail',
           (o.wait === null ? '지금 탈 수 있는 버스 정보가 없어요' : Math.max(1, Math.round(o.wait)) + '분 후 탑승') +
           ' · ' + o.trip.stops + '정거장 · ' + o.trip.station.name + ' 하차 · 내려서 ' + o.trip.walk + '분');
-        li.addEventListener('click', function () { openTripOption(o); });
+        li.addEventListener('click', function () { selectTripOption(o, li); });
         resultList.appendChild(li);
       });
 
       if (catchable.length > 0) showBusHint('추천을 누르면 그 버스를 기다리는 동안 다녀올 곳을 보여 드려요', 5000);
     }
 
-    // 추천 누르기 → 그 정류장 패널 + 그 버스 "기다리는 동안 다녀올 곳"
+    // ───────── 지도에 경로 그리기 (카카오맵 길찾기처럼) ─────────
+    //  걷기: 회색 선 · 버스: 버스 색 굵은 선 + 가운데 흰 점선 · "○○ 승차 / ○○ 하차" 이름표
+    var lastTrip = null;          // 마지막 버스 길찾기의 { origin, dest }
+    var routeShapes = [];         // 지도에 그린 선과 이름표 (지울 때 한꺼번에)
+    var routeDraw = 0;            // 그리는 중에 다른 경로를 누르면 앞의 것은 버려요
+    var routePathCache = {};
+
+    var routeHidStops = false;    // 경로를 보는 동안 정류장 아이콘을 잠깐 껐는지
+
+    function clearRoute() {
+      routeDraw++;
+      routeShapes.forEach(function (x) { x.setMap(null); });
+      routeShapes = [];
+      if (routeHidStops) { // 경로를 지우면 정류장 표시를 다시 켜요
+        routeHidStops = false;
+        if (!busOn) busToggle.click();
+      }
+    }
+
+    // 정류장 아이콘이 많으면 경로를 가려서, 경로를 그릴 때는 잠깐 꺼요 (🚌 버튼으로 다시 켤 수 있어요)
+    function hideStopsForRoute() {
+      if (!busOn) return;
+      busToggle.click();
+      routeHidStops = true;
+      showBusHint('경로가 잘 보이게 정류장 표시를 잠깐 껐어요 (🚌 버튼으로 다시 켜기)', 4000);
+    }
+
+    function toLatLngs(path) { return path.map(function (c) { return new kakao.maps.LatLng(c[1], c[0]); }); }
+
+    function drawWalkSegment(latlngs) {
+      routeShapes.push(new kakao.maps.Polyline({ map: map, path: latlngs, strokeWeight: 7, strokeColor: '#ffffff', strokeOpacity: 0.9 }));
+      routeShapes.push(new kakao.maps.Polyline({ map: map, path: latlngs, strokeWeight: 4, strokeColor: '#7a7a7a', strokeOpacity: 0.95 }));
+    }
+
+    function drawRideSegment(latlngs, color) {
+      routeShapes.push(new kakao.maps.Polyline({ map: map, path: latlngs, strokeWeight: 10, strokeColor: '#ffffff', strokeOpacity: 0.95 }));
+      routeShapes.push(new kakao.maps.Polyline({ map: map, path: latlngs, strokeWeight: 7, strokeColor: color, strokeOpacity: 1 }));
+      routeShapes.push(new kakao.maps.Polyline({ map: map, path: latlngs, strokeWeight: 2, strokeColor: '#ffffff', strokeOpacity: 0.9, strokeStyle: 'dash' }));
+    }
+
+    function addRouteLabel(position, name, action, color) {
+      var el = document.createElement('div');
+      el.className = 'route-label';
+      var nameEl = document.createElement('span');
+      nameEl.textContent = name;
+      var tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.style.background = color;
+      tag.textContent = action; // "승차" / "하차" / "환승"
+      el.appendChild(nameEl);
+      el.appendChild(tag);
+      routeShapes.push(new kakao.maps.CustomOverlay({ map: map, position: position, content: el, yAnchor: 1.5, zIndex: 6 }));
+    }
+
+    function fitRoute(points) {
+      var bounds = new kakao.maps.LatLngBounds();
+      points.forEach(function (p) { bounds.extend(p); });
+      map.setBounds(bounds, 60, 40, 60, 40); // 위·오른쪽·아래·왼쪽 여백 (픽셀)
+    }
+
+    // 노선 모양 전체에서 승차 정류장 ~ 하차 정류장 구간만 잘라내기
+    function sliceRoutePath(path, from, to) {
+      var nearest = function (target, startIdx) {
+        var best = startIdx, bestD = Infinity;
+        var cos = Math.cos(target.getLat() * Math.PI / 180);
+        for (var i = startIdx; i < path.length; i++) {
+          var dx = (path[i][0] - target.getLng()) * cos, dy = path[i][1] - target.getLat();
+          var d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+      };
+      var a = nearest(from, 0);
+      var b = nearest(to, a); // 하차는 승차 뒤에서 찾아요 (같은 길을 돌아오는 노선이 있어서)
+      return path.slice(a, b + 1);
+    }
+
+    function routePath(routeId) {
+      if (!routePathCache[routeId]) {
+        routePathCache[routeId] = fetch('/api/bus?type=routepath&routeId=' + routeId)
+          .then(function (r) { return r.json(); })
+          .then(function (d) { return d.path || []; })
+          .catch(function () { delete routePathCache[routeId]; return []; });
+      }
+      return routePathCache[routeId];
+    }
+
+    // 한 번에 가는 버스 추천 → 출발 → (걷기) → 승차 → (버스) → 하차 → (걷기) → 도착
+    function drawOptionRoute(o) {
+      if (!lastTrip) return;
+      clearRoute();
+      var mine = routeDraw;
+      var origin = lastTrip.origin.position, dest = lastTrip.dest.position;
+      var board = o.stop.position;
+      var alight = new kakao.maps.LatLng(o.trip.station.lat, o.trip.station.lng);
+      var type = /^N/.test(o.bus.route) ? { color: '#1f2a44' } : ROUTE_TYPES[o.bus.type] || { color: '#8a8a8a' };
+      hideStopsForRoute();
+      fitRoute([origin, board, alight, dest]); // 먼저 전체가 보이게
+
+      Promise.all([fetchWalk(origin, board), routePath(o.bus.routeId), fetchWalk(alight, dest)]).then(function (r) {
+        if (mine !== routeDraw) return;
+        drawWalkSegment(r[0] ? toLatLngs(r[0].path) : [origin, board]);
+        var ride = r[1].length > 1 ? toLatLngs(sliceRoutePath(r[1], board, alight)) : [board, alight];
+        drawRideSegment(ride.length > 1 ? ride : [board, alight], type.color);
+        drawWalkSegment(r[2] ? toLatLngs(r[2].path) : [alight, dest]);
+        addRouteLabel(board, o.stop.name, '승차', type.color);
+        addRouteLabel(alight, o.trip.station.name, '하차', type.color);
+      });
+    }
+
+    // TMAP 환승 경로 → 구간마다 모양이 들어 있어서 그대로 그려요
+    function drawItinerary(it) {
+      clearRoute();
+      hideStopsForRoute();
+      var points = [];
+      it.legs.forEach(function (leg, i) {
+        var latlngs = toLatLngs(leg.path || [[leg.start.lng, leg.start.lat], [leg.end.lng, leg.end.lat]]);
+        points = points.concat(latlngs);
+        if (leg.mode === 'WALK') { drawWalkSegment(latlngs); return; }
+        var color = leg.routeColor ? '#' + leg.routeColor : '#8a8a8a';
+        drawRideSegment(latlngs, color);
+        var firstRide = it.legs.slice(0, i).every(function (l) { return l.mode === 'WALK'; });
+        addRouteLabel(new kakao.maps.LatLng(leg.start.lat, leg.start.lng), leg.start.name, firstRide ? '승차' : '환승', color);
+        addRouteLabel(new kakao.maps.LatLng(leg.end.lat, leg.end.lng), leg.end.name, '하차', color);
+      });
+      if (points.length) fitRoute(points);
+    }
+
+    // 추천을 누르면: 경로를 그리고, "기다리는 동안 다녀올 곳" 버튼을 펼쳐요
+    function selectTripOption(o, li) {
+      document.querySelectorAll('#results .trip-option.selected, .itinerary.selected').forEach(function (e) { e.classList.remove('selected'); });
+      li.classList.add('selected');
+      drawOptionRoute(o);
+      if (!li.querySelector('.t-actions')) {
+        var actions = document.createElement('div');
+        actions.className = 't-actions';
+        var go = document.createElement('button');
+        go.type = 'button';
+        go.textContent = '이 버스 기다리며 다녀올 곳 ›';
+        go.addEventListener('click', function (e) { e.stopPropagation(); openTripOption(o); });
+        actions.appendChild(go);
+        li.appendChild(actions);
+      }
+    }
+
+    // 추천 누르기 → 그 정류장 패널 + 그 버스 "기다리는 동안 다녀올 곳\"
     function openTripOption(o) {
       showStopCard(o.stop, o.stop.position);
       enterWait(o.stop, o.bus);
@@ -2378,7 +2536,7 @@
       var r = function (v) { return v.toFixed(3); };
       var q = 'sx=' + r(origin.position.getLng()) + '&sy=' + r(origin.position.getLat()) + '&ex=' + r(dest.position.getLng()) + '&ey=' + r(dest.position.getLat());
       if (!transitCache[q]) {
-        transitCache[q] = fetch('/api/tmap?type=transit&' + q).then(function (res) {
+        transitCache[q] = fetch('/api/tmap?type=transit&v=2&' + q).then(function (res) { // v=2: 구간 모양이 들어간 새 형식
           return res.json().then(function (d) {
             if (res.status === 429 || d.error === 'quota') return { quota: true };
             if (d.error) throw new Error(d.error);
@@ -2437,6 +2595,16 @@
         legs.appendChild(document.createTextNode(' ' + leg.start.name + ' → ' + leg.end.name + (leg.stops ? ' (' + leg.stops + '정거장)' : '')));
       });
       card.appendChild(legs);
+      var show = document.createElement('button');
+      show.type = 'button';
+      show.className = 'it-show';
+      show.textContent = '🗺 지도에 경로 보기';
+      show.addEventListener('click', function () {
+        document.querySelectorAll('.itinerary.selected, #results .trip-option.selected').forEach(function (e) { e.classList.remove('selected'); });
+        card.classList.add('selected');
+        drawItinerary(it);
+      });
+      card.appendChild(show);
 
       // 첫 번째로 타는 게 버스면 실시간 도착 정보와 연결
       var first = it.legs.filter(function (l) { return l.mode !== 'WALK'; })[0];

@@ -85,10 +85,27 @@ function simplifyItinerary(it) {
         distance: l.distance,
         start: { name: l.start.name, lat: l.start.lat, lng: l.start.lon },
         end: { name: l.end.name, lat: l.end.lat, lng: l.end.lon },
-        stops: stations.length ? stations.length - 1 : 0 // 몇 정거장
+        stops: stations.length ? stations.length - 1 : 0, // 몇 정거장
+        path: legPath(l)                                   // 지도에 그릴 구간 모양 [[경도, 위도], ...]
       };
     })
   };
+}
+
+// 걷기 구간은 steps[].linestring, 버스·지하철 구간은 passShape.linestring ("경도,위도 경도,위도 ...")
+function legPath(leg) {
+  const strings = leg.mode === 'WALK'
+    ? (leg.steps || []).map((s) => s.linestring || '')
+    : [leg.passShape ? leg.passShape.linestring : ''];
+  const path = [];
+  strings.join(' ').trim().split(/\s+/).forEach((pair) => {
+    const xy = pair.split(',').map(Number);
+    if (xy.length === 2 && isFinite(xy[0]) && isFinite(xy[1])) path.push([Math.round(xy[0] * 1e6) / 1e6, Math.round(xy[1] * 1e6) / 1e6]);
+  });
+  if (path.length < 2) { // 모양 정보가 없으면 출발점-도착점 직선
+    return [[leg.start.lon, leg.start.lat], [leg.end.lon, leg.end.lat]];
+  }
+  return path;
 }
 
 function send(res, status, body, cacheSeconds) {
