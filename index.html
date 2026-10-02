@@ -34,9 +34,54 @@
     }
     header {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
+      gap: 8px 14px;
       padding: 10px 16px;
+    }
+    #trip-form[hidden], #search-form[hidden] { display: none; } /* 탭에서 고르지 않은 쪽은 숨겨요 */
+    .top-row { display: flex; align-items: center; gap: 12px; }
+    .mode-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--line); }
+    .mode-tabs button {
+      padding: 5px 10px; border: none; border-radius: 7px; background: none;
+      color: var(--muted); font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+    }
+    .mode-tabs button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+    /* 출발지 → 목적지 */
+    #trip-form { display: flex; gap: 6px; flex: 1 1 520px; max-width: 760px; min-width: 0; }
+    .trip-field { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+    .trip-field input {
+      width: 100%; min-width: 0; padding: 8px 12px 8px 28px; font-size: 1rem;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text);
+    }
+    .trip-field #trip-from { padding-right: 36px; }
+    .trip-dot { position: absolute; left: 11px; width: 9px; height: 9px; border-radius: 50%; }
+    .trip-dot.from { background: #30a46c; }
+    .trip-dot.to { background: #e5484d; }
+    #trip-me {
+      position: absolute; right: 4px; width: 30px; height: 30px; border: none; border-radius: 6px;
+      background: none; color: var(--accent); font-size: 18px; cursor: pointer;
+    }
+    .trip-go { padding: 8px 14px; font-size: 1rem; border: none; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
+    @media (max-width: 600px) {
+      #trip-form { display: grid; grid-template-columns: 1fr auto; flex-basis: 100%; }
+      #trip-form .trip-go { grid-column: 2; grid-row: 1 / span 2; }
+    }
+
+    /* 버스 길찾기 결과 */
+    #results .trip-option { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 10px; align-items: center; }
+    #results .trip-option .route-chip { grid-row: span 2; align-self: start; min-width: 60px; padding: 3px 8px; }
+    #results .trip-option .t-stop { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #results .trip-option .t-arrive { grid-column: 3; grid-row: 1; text-align: right; font-weight: 700; white-space: nowrap; }
+    #results .trip-option .t-detail { grid-column: 2 / -1; font-size: 0.8rem; color: var(--muted); }
+    #results .trip-option.later { opacity: 0.6; }
+    #results .trip-summary { display: block; cursor: default; background: var(--bg); }
+    #results .trip-summary b { color: var(--text); }
+    #results .trip-summary small { display: block; color: var(--muted); margin-top: 2px; }
+    .route-flag {
+      padding: 4px 8px; border-radius: 12px; color: #fff; font-size: 12px; font-weight: 700;
+      white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.3);
     }
     h1 { font-size: 1.5rem; letter-spacing: -0.03em; flex-shrink: 0; }
     h1 span { color: var(--accent); }
@@ -309,8 +354,27 @@
 </head>
 <body>
   <header>
-    <h1>time<span>zip</span></h1>
-    <form id="search-form">
+    <div class="top-row">
+      <h1>time<span>zip</span></h1>
+      <div class="mode-tabs" role="tablist">
+        <button type="button" role="tab" data-mode="trip" class="on" aria-selected="true">🚌 버스 길찾기</button>
+        <button type="button" role="tab" data-mode="place" aria-selected="false">🔍 장소 검색</button>
+      </div>
+    </div>
+    <!-- 첫 화면: 출발지 → 목적지 → 버스 찾기 -->
+    <form id="trip-form" autocomplete="off">
+      <div class="trip-field">
+        <span class="trip-dot from" aria-hidden="true"></span>
+        <input id="trip-from" type="search" placeholder="출발지 (비우면 내 위치)" aria-label="출발지">
+        <button type="button" id="trip-me" title="내 위치에서 출발" aria-label="내 위치에서 출발">◎</button>
+      </div>
+      <div class="trip-field">
+        <span class="trip-dot to" aria-hidden="true"></span>
+        <input id="trip-to" type="search" placeholder="목적지 (예: 노원역)" aria-label="목적지">
+      </div>
+      <button type="submit" class="trip-go">버스 찾기</button>
+    </form>
+    <form id="search-form" hidden>
       <input id="keyword" type="search" placeholder="장소나 주소 검색 (예: 석계역 카페)" value="석계역 카페">
       <button type="submit">검색</button>
     </form>
@@ -741,6 +805,7 @@
 
     function clearMarkers() {
       closeStopPanel(); // 검색하면 버스 패널은 닫고 결과 목록을 보여줘요
+      if (originFlag) { originFlag.setMap(null); originFlag = null; } // 버스 길찾기 출발 깃발도
       clusterer.clear();
       markers = [];
       searchCircle.setMap(null);
@@ -916,9 +981,12 @@
       fillColor: '#2f6fed', fillOpacity: 0.12
     });
 
-    myLocationButton.addEventListener('click', function () {
+    myLocationButton.addEventListener('click', function () { locateMe(); });
+
+    // 내 위치 찾기. onDone(위치) / onFail() 은 버스 길찾기에서 써요
+    function locateMe(onDone, onFail) {
       if (!navigator.geolocation) {
-        alert('이 브라우저에서는 위치 기능을 쓸 수 없어요.');
+        if (onFail) onFail(); else alert('이 브라우저에서는 위치 기능을 쓸 수 없어요.');
         return;
       }
       myLocationButton.classList.add('loading');
@@ -937,17 +1005,19 @@
         myAccuracy.setRadius(pos.coords.accuracy); // 위치 오차 범위(미터)를 옅은 원으로
         myAccuracy.setMap(map);
 
+        if (onDone) { onDone(here); return; }
         if (map.getLevel() > 4) map.setLevel(4);
         map.panTo(here);
       }, function (err) {
         myLocationButton.classList.remove('loading');
+        if (onFail) { onFail(err); return; }
         if (err.code === err.PERMISSION_DENIED) {
           alert('위치 권한이 꺼져 있어요. 브라우저 설정에서 이 사이트의 위치 권한을 허용해 주세요.');
         } else {
           alert('현재 위치를 찾지 못했어요. 잠시 후 다시 해 보세요.');
         }
       }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
-    });
+    }
 
     // ───────── 버스정류장 ─────────
     // 정류장 버튼을 켜면 지금 보는 지도 가운데 주변 정류장을 보여주고, 누르면 지나는 버스와 도착 정보를 보여줘요.
@@ -1909,6 +1979,232 @@
         if (Math.abs(dx) <= 16 && dy >= -40 && dy <= 6) return candidates[i];
       }
       return null;
+    }
+
+    // ───────── 첫 화면: 출발지 → 목적지 버스 길찾기 ─────────
+    // 출발지 400m 안의 정류장들을 모두 확인해서, 목적지까지 한 번에 가는 버스를 "빨리 도착하는 순"으로 추천해요.
+    // 도착 예상 = 정류장까지 걷기(또는 버스 기다리기 중 긴 쪽) + 정거장 수 × 2분 + 내려서 걷기
+    var TRIP_STOP_RADIUS = 400;   // 출발지에서 이만큼 안의 정류장까지 확인 (미터)
+    var TRIP_MAX_STOPS = 8;       // 가까운 정류장 몇 곳까지 확인할지 (API 사용량 때문에)
+    var tripFrom = document.getElementById('trip-from');
+    var tripTo = document.getElementById('trip-to');
+    var tripRequest = 0;
+    var originFlag = null;
+
+    // 탭: 버스 길찾기 / 장소 검색
+    document.querySelectorAll('.mode-tabs button').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var mode = tab.dataset.mode;
+        document.querySelectorAll('.mode-tabs button').forEach(function (t) {
+          t.classList.toggle('on', t === tab);
+          t.setAttribute('aria-selected', String(t === tab));
+        });
+        document.getElementById('trip-form').hidden = mode !== 'trip';
+        document.getElementById('search-form').hidden = mode !== 'place';
+      });
+    });
+
+    document.getElementById('trip-me').addEventListener('click', function () {
+      tripFrom.value = '';
+      tripFrom.placeholder = '내 위치';
+      locateMe(function () { tripFrom.placeholder = '내 위치 ✓'; }, function () {
+        tripFrom.placeholder = '출발지 (위치 권한이 없어요)';
+      });
+    });
+
+    document.getElementById('trip-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var toText = tripTo.value.trim();
+      if (!toText) { tripTo.focus(); return; }
+      tripFrom.blur(); tripTo.blur(); // 휴대폰 키보드 내리기
+      var thisRequest = ++tripRequest;
+      setActiveChip(null);
+      clearMarkers();
+      showTripMessage('출발지를 찾는 중…');
+
+      resolveOrigin(tripFrom.value.trim(), function (origin) {
+        if (thisRequest !== tripRequest) return;
+        if (!origin) return showTripMessage('출발지 "' + tripFrom.value.trim() + '"을(를) 찾지 못했어요.');
+        places.keywordSearch(toText, function (data, status) {
+          if (thisRequest !== tripRequest) return;
+          if (status !== kakao.maps.services.Status.OK) return showTripMessage('목적지 "' + toText + '"을(를) 찾지 못했어요.');
+          var top = data[0];
+          var dest = { label: toText, name: top.place_name, address: top.road_address_name || top.address_name, position: new kakao.maps.LatLng(top.y, top.x) };
+          planTrip(origin, dest, thisRequest);
+        }, { location: origin.position }); // 같은 이름이 여러 곳이면 출발지에서 가까운 곳
+      });
+    });
+
+    // 출발지: 비어 있으면 내 위치(안 되면 지금 보는 지도 가운데), 글자가 있으면 그 장소
+    function resolveOrigin(text, done) {
+      if (!text) {
+        if (myPosition) return done({ label: '내 위치', name: '내 위치', position: myPosition });
+        showTripMessage('내 위치를 찾는 중…');
+        locateMe(function (here) { done({ label: '내 위치', name: '내 위치', position: here }); }, function () {
+          done({ label: '지도 가운데', name: '지도 가운데', position: map.getCenter() }); // 위치 권한이 없으면
+        });
+        return;
+      }
+      places.keywordSearch(text, function (data, status) {
+        if (status !== kakao.maps.services.Status.OK) return done(null);
+        done({ label: text, name: data[0].place_name, position: new kakao.maps.LatLng(data[0].y, data[0].x) });
+      }, { location: myPosition || map.getCenter() });
+    }
+
+    function planTrip(origin, dest, thisRequest) {
+      // 지도: 출발 깃발 + 목적지 깃발, 출발지 쪽으로 이동 (정류장도 그 주변으로 다시 불러와요)
+      if (originFlag) originFlag.setMap(null);
+      var flag = document.createElement('div');
+      flag.className = 'route-flag';
+      flag.style.background = '#30a46c';
+      flag.textContent = '출발 · ' + origin.label;
+      originFlag = new kakao.maps.CustomOverlay({ position: origin.position, content: flag, yAnchor: 1.4, zIndex: 4 });
+      originFlag.setMap(map);
+      setDestination(dest);
+      destInput.value = dest.label;
+      map.setLevel(4);
+      map.setCenter(origin.position);
+
+      showTripMessage(origin.label + ' 근처 정류장에서 ' + dest.label + '까지 가는 버스를 찾는 중…');
+
+      fetch('/api/bus?type=nearby&lat=' + origin.position.getLat() + '&lng=' + origin.position.getLng() + '&radius=' + TRIP_STOP_RADIUS)
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (thisRequest !== tripRequest) return;
+          var stops = (data.stations || []).slice(0, TRIP_MAX_STOPS); // 가까운 순으로 와요
+          return Promise.all(stops.map(function (stop) { return optionsAtStop(stop, dest); }))
+            .then(function (lists) {
+              if (thisRequest !== tripRequest) return;
+              renderTripOptions(origin, dest, [].concat.apply([], lists));
+            });
+        })
+        .catch(function () {
+          if (thisRequest === tripRequest) showTripMessage('버스 정보를 가져오지 못했어요. 잠시 후 다시 해 보세요.');
+        });
+    }
+
+    // 정류장 하나: 도착 정보 + 노선 목록으로 목적지 가는 버스 찾기
+    function optionsAtStop(stop, dest) {
+      stop.position = new kakao.maps.LatLng(stop.lat, stop.lng);
+      var walkTo = Math.max(1, Math.ceil(stop.dist * DETOUR / WALK_M_PER_MIN));
+      return fetch('/api/bus?type=arrivals&id=' + stop.id + '&arsId=' + stop.arsId + '&seoul=' + (stop.seoul ? 1 : 0) + '&gg=' + (stop.gg ? 1 : 0))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var buses = (data.buses || []).filter(function (b) { return b.routeId; });
+          return Promise.all(buses.map(function (bus) {
+            return routeStations(bus.routeId).then(function (stations) {
+              var trip = findAlight(stations, bus.order, dest.position);
+              if (!trip.ok || trip.stops > MAX_STOPS) return null;
+              trips[tripKey(bus)] = trip; // 정류장 패널에서도 다시 계산하지 않게
+              return makeOption(stop, bus, trip, walkTo);
+            });
+          }));
+        })
+        .then(function (list) { return list.filter(Boolean); })
+        .catch(function () { return []; });
+    }
+
+    // 걸어가서 탈 수 있는 버스 고르기: 첫 버스가 걷는 시간보다 먼저 오면 두 번째 버스
+    function makeOption(stop, bus, trip, walkTo) {
+      var waits = [bus.arr1, bus.arr2].map(arrivalMinutes);
+      var wait = null;
+      for (var i = 0; i < waits.length; i++) {
+        if (waits[i] !== null && waits[i] >= walkTo) { wait = waits[i]; break; }
+      }
+      var ride = trip.stops * MIN_PER_STOP;
+      return {
+        stop: stop, bus: bus, trip: trip, walkTo: walkTo, wait: wait,
+        total: wait === null ? null : Math.max(walkTo, wait) + ride + trip.walk
+      };
+    }
+
+    function arrivalMinutes(arr) {
+      if (!arr) return null;
+      if (arr.status === 'running') return arr.minutes + (arr.seconds || 0) / 60;
+      if (arr.status === 'soon') return 0.5;
+      return null; // 출발 대기, 운행 종료, 정보 없음
+    }
+
+    function renderTripOptions(origin, dest, options) {
+      // 같은 노선은 가장 빨리 도착하는 정류장 하나만
+      var best = {};
+      options.forEach(function (o) {
+        var key = o.bus.routeId;
+        var cur = best[key];
+        var score = o.total === null ? Infinity : o.total;
+        if (!cur || score < (cur.total === null ? Infinity : cur.total) ||
+            (score === Infinity && o.walkTo < cur.walkTo)) best[key] = o;
+      });
+      var list = Object.keys(best).map(function (k) { return best[k]; });
+      list.sort(function (a, b) {
+        var ta = a.total === null ? Infinity : a.total;
+        var tb = b.total === null ? Infinity : b.total;
+        return ta - tb || a.walkTo - b.walkTo;
+      });
+      var catchable = list.filter(function (o) { return o.total !== null; });
+
+      resultList.innerHTML = '';
+      var summary = document.createElement('li');
+      summary.className = 'trip-summary';
+      var title = document.createElement('div');
+      title.innerHTML = '🚌 <b></b> → <b></b>';
+      title.querySelectorAll('b')[0].textContent = origin.label;
+      title.querySelectorAll('b')[1].textContent = dest.label;
+      summary.appendChild(title);
+      var sub = document.createElement('small');
+      sub.textContent = list.length === 0
+        ? '근처 ' + TRIP_STOP_RADIUS + 'm 안 정류장에서 한 번에 가는 버스가 없어요.'
+        : '한 번에 가는 버스 ' + list.length + '개 · 빨리 도착하는 순 (도착 시간은 어림값이에요)';
+      summary.appendChild(sub);
+      var straight = distanceMeters(origin.position, dest.position);
+      if (straight < 800) { // 가까우면 걷는 것도 알려줘요
+        var walkNote = document.createElement('small');
+        walkNote.textContent = '🚶 걸어서 약 ' + Math.ceil(straight * DETOUR / WALK_M_PER_MIN) + '분 거리예요.';
+        summary.appendChild(walkNote);
+      }
+      var link = document.createElement('a');
+      link.className = 'dest-route' + (list.length === 0 ? ' big' : '');
+      link.href = kakaoRouteUrl('traffic', origin.name, origin.position, dest.name, dest.position);
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = list.length === 0 ? '🗺 환승 경로 보기 (카카오맵) ↗' : '🗺 환승 포함 다른 경로 (카카오맵) ↗';
+      summary.appendChild(link);
+      resultList.appendChild(summary);
+
+      list.forEach(function (o) {
+        var li = document.createElement('li');
+        li.className = 'trip-option' + (o.total === null ? ' later' : '');
+        var type = /^N/.test(o.bus.route) ? { name: '심야', color: '#1f2a44' } : ROUTE_TYPES[o.bus.type] || { name: '', color: '#8a8a8a' };
+        var chip = document.createElement('div');
+        chip.className = 'route-chip';
+        chip.style.background = type.color;
+        if (type.text) chip.style.color = type.text;
+        chip.textContent = o.bus.route;
+        li.appendChild(chip);
+        addLine(li, 't-stop', o.stop.name + ' (걸어서 ' + o.walkTo + '분)');
+        addLine(li, 't-arrive', o.total === null ? '도착 정보 없음' : '약 ' + Math.round(o.total) + '분');
+        addLine(li, 't-detail',
+          (o.wait === null ? '지금 탈 수 있는 버스 정보가 없어요' : Math.max(1, Math.round(o.wait)) + '분 후 탑승') +
+          ' · ' + o.trip.stops + '정거장 · ' + o.trip.station.name + ' 하차 · 내려서 ' + o.trip.walk + '분');
+        li.addEventListener('click', function () { openTripOption(o); });
+        resultList.appendChild(li);
+      });
+
+      if (catchable.length > 0) showBusHint('추천을 누르면 그 버스를 기다리는 동안 다녀올 곳을 보여 드려요', 5000);
+    }
+
+    // 추천 누르기 → 그 정류장 패널 + 그 버스 "기다리는 동안 다녀올 곳"
+    function openTripOption(o) {
+      showStopCard(o.stop, o.stop.position);
+      enterWait(o.stop, o.bus);
+    }
+
+    function showTripMessage(text) {
+      resultList.innerHTML = '';
+      var li = document.createElement('li');
+      li.className = 'message';
+      li.textContent = text;
+      resultList.appendChild(li);
     }
 
     // 버스정류장은 timezip의 핵심이라 처음부터 켜 둬요
