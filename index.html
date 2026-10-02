@@ -148,6 +148,8 @@
     .dest-info .text { flex: 1; min-width: 0; }
     .dest-info .text small { display: block; color: var(--muted); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dest-info button { border: none; background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer; flex-shrink: 0; }
+    .dest-route { display: inline-block; margin-top: 4px; color: var(--accent); font-size: 0.8rem; font-weight: 600; text-decoration: none; }
+    .dest-route.big { display: block; margin-top: 10px; padding: 10px; border-radius: 8px; text-align: center; background: var(--accent); color: #fff; font-size: 0.9rem; }
     .dest-line { grid-column: 2 / -1; font-size: 0.8rem; color: var(--accent); font-weight: 600; }
     .dest-line.checking { color: var(--muted); font-weight: 400; }
     .others-toggle { display: block; width: 100%; padding: 12px 16px; border: none; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--muted); font-size: 0.85rem; cursor: pointer; text-align: left; }
@@ -1225,7 +1227,8 @@
       if (going.length === 0 && checking.length === 0) {
         var none = document.createElement('div');
         none.className = 'sp-message';
-        none.textContent = '이 정류장에서 ' + destination.label + '까지 한 번에 가는 버스가 없어요. 근처 다른 정류장을 눌러 보세요.';
+        none.textContent = '이 정류장에서 ' + destination.label + '까지 한 번에 가는 버스가 없어요. 근처 다른 정류장을 눌러 보거나, 갈아타는 경로를 카카오맵에서 확인해 보세요.';
+        none.appendChild(transitLink('dest-route big', '🗺 환승 경로 보기 (카카오맵) ↗'));
         spList.appendChild(none);
       }
       if (others.length > 0) {
@@ -1294,6 +1297,23 @@
       if (selectedStop) checkTrips(selectedStop, lastBuses);
     }
 
+    // 카카오맵 길찾기 링크 만들기 (mode: traffic 대중교통, walk 도보, car 자동차, bicycle 자전거)
+    //   https://map.kakao.com/link/by/{mode}/출발이름,위도,경도/도착이름,위도,경도
+    function kakaoRouteUrl(mode, fromName, fromPos, toName, toPos) {
+      var point = function (name, pos) { return encodeURIComponent(name) + ',' + pos.getLat() + ',' + pos.getLng(); };
+      return 'https://map.kakao.com/link/by/' + mode + '/' + point(fromName, fromPos) + '/' + point(toName, toPos);
+    }
+
+    function transitLink(className, text) {
+      var a = document.createElement('a');
+      a.className = className;
+      a.href = kakaoRouteUrl('traffic', selectedStop.name, selectedStop.position, destination.name, destination.position);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = text;
+      return a;
+    }
+
     function updateDestInfo(goingCount, stillChecking) {
       if (!destination) return;
       destInfo.hidden = false;
@@ -1304,6 +1324,9 @@
       var where = document.createElement('small');
       where.textContent = destination.name + ' · ' + destination.address; // 어느 장소로 찾았는지 보여줘요
       text.appendChild(where);
+      if (selectedStop && selectedStop.position) {
+        text.appendChild(transitLink('dest-route', '🗺 카카오맵 대중교통 길찾기 ↗')); // 환승 경로까지 카카오맵에서
+      }
       destInfo.appendChild(text);
       var clear = document.createElement('button');
       clear.type = 'button';
