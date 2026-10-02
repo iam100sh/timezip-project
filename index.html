@@ -154,6 +154,9 @@
     }
     h1 { font-size: 1.5rem; letter-spacing: -0.03em; flex-shrink: 0; }
     h1 span { color: var(--accent); }
+    .home-link { color: inherit; text-decoration: none; border-radius: 6px; }
+    .home-link:hover { opacity: 0.8; }
+    .home-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
     /* 검색창 */
     #search-form { display: flex; gap: 6px; flex: 1; max-width: 480px; }
@@ -440,7 +443,7 @@
 <body>
   <header>
     <div class="top-row">
-      <h1>time<span>zip</span></h1>
+      <h1><a href="/" class="home-link" title="처음 화면으로" aria-label="timezip 처음 화면으로">time<span>zip</span></a></h1>
       <div class="mode-tabs" role="tablist">
         <button type="button" role="tab" data-mode="trip" class="on" aria-selected="true">🚌 버스 길찾기</button>
         <button type="button" role="tab" data-mode="place" aria-selected="false">🔍 장소 검색</button>
