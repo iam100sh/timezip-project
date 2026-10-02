@@ -79,6 +79,18 @@
     #results .trip-summary { display: block; cursor: default; background: var(--bg); }
     #results .trip-summary b { color: var(--text); }
     #results .trip-summary small { display: block; color: var(--muted); margin-top: 2px; }
+    .transit-button { display: block; width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface); color: var(--accent); font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    .transit-button.big { background: var(--accent); color: #fff; }
+    .transit-button:disabled { opacity: 0.6; cursor: default; }
+    .transit-msg { margin-top: 8px; font-size: 0.85rem; color: var(--muted); }
+    .itinerary { margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+    .it-head { font-weight: 700; font-size: 0.9rem; color: var(--text); }
+    .it-legs { margin-top: 4px; font-size: 0.82rem; line-height: 1.7; color: var(--text); }
+    .it-chip { display: inline-block; padding: 0 6px; border-radius: 4px; color: #fff; font-weight: 700; font-size: 0.78rem; }
+    .it-live { margin-top: 6px; font-size: 0.82rem; color: var(--accent); font-weight: 600; }
+    .it-live button { margin-left: 4px; padding: 3px 8px; border: none; border-radius: 6px; background: var(--accent); color: #fff; font-size: 0.78rem; cursor: pointer; }
+    .walk-real { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #eef4ff; color: #1f3d8a; font-size: 12px; line-height: 1.4; }
+    .walk-real.short { background: #fff1f0; color: #b42318; }
     .route-flag {
       padding: 4px 8px; border-radius: 12px; color: #fff; font-size: 12px; font-weight: 700;
       white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.3);
@@ -1828,6 +1840,7 @@
       stopPanel.classList.remove('waiting');
       waitView.hidden = true;
       clearWaitMarkers();
+      clearWalkPath();
       infowindow.close();
     }
 
@@ -1997,7 +2010,59 @@
       addLink(buttons, '가는 길 (도보)', 'https://map.kakao.com/link/by/walk/' + stopPoint + '/' + placePoint);
       addLink(buttons, '돌아오는 길', 'https://map.kakao.com/link/by/walk/' + placePoint + '/' + stopPoint);
       card.appendChild(buttons);
+
+      // TMAP 보행자 경로로 실제 도보 시간을 받아서, 지도에 길을 그리고 "다녀올 수 있는지"를 다시 계산해요
+      var real = document.createElement('div');
+      real.className = 'walk-real';
+      real.textContent = '🚶 실제 걷는 길 확인 중…';
+      card.insertBefore(real, buttons);
       openInfoAt(card, new kakao.maps.LatLng(place.y, place.x));
+
+      var entry = waitState.places.filter(function (x) { return x.place === place; })[0];
+      var stay = entry ? entry.sub.stay : 5;
+      var state = waitState;
+      fetchWalk(stop.position, new kakao.maps.LatLng(place.y, place.x)).then(function (walk) {
+        if (waitState !== state) return;
+        if (!walk) { real.textContent = '🚶 실제 걷는 길을 가져오지 못했어요 (어림값으로 계산했어요)'; return; }
+        drawWalkPath(walk.path);
+        var oneWay = Math.max(1, Math.ceil(walk.seconds / 60));
+        var total = oneWay * 2 + stay;
+        var freeMin = Math.floor((waitState.endAt - Date.now()) / 60000) - BUFFER_MIN;
+        var spare = freeMin - total;
+        real.textContent = '🚶 실제 길 ' + walk.distance + 'm · 가는 ' + oneWay + '분 + 머무는 ' + stay + '분 + 오는 ' + oneWay + '분 = ' + total + '분 · ' +
+          (spare >= 0 ? '여유 ' + spare + '분' : '⚠️ ' + (-spare) + '분 모자라요');
+        real.classList.toggle('short', spare < 0);
+        infowindow.setContent(card); // 말풍선 크기 다시 맞추기
+      });
+    }
+
+    // 정류장 ↔ 가게 도보 경로 (TMAP, 하루 1,000건). 같은 구간은 다시 부르지 않아요
+    var walkCache = {};
+    var walkLine = null;
+    function fetchWalk(from, to) {
+      var key = [from.getLng(), from.getLat(), to.getLng(), to.getLat()].map(function (v) { return v.toFixed(5); }).join(',');
+      if (!walkCache[key]) {
+        walkCache[key] = fetch('/api/tmap?type=walk&sx=' + from.getLng() + '&sy=' + from.getLat() + '&ex=' + to.getLng() + '&ey=' + to.getLat())
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) { return d && d.seconds ? d : null; })
+          .catch(function () { return null; });
+        walkCache[key].then(function (d) { if (!d) delete walkCache[key]; }); // 실패한 건 다음에 다시
+      }
+      return walkCache[key];
+    }
+
+    function drawWalkPath(path) {
+      clearWalkPath();
+      if (!path || path.length < 2) return;
+      walkLine = new kakao.maps.Polyline({
+        map: map,
+        path: path.map(function (c) { return new kakao.maps.LatLng(c[1], c[0]); }),
+        strokeWeight: 5, strokeColor: '#2f6fed', strokeOpacity: 0.85, strokeStyle: 'solid'
+      });
+    }
+
+    function clearWalkPath() {
+      if (walkLine) { walkLine.setMap(null); walkLine = null; }
     }
 
     // 카테고리 색 핀 그림 (색마다 한 번만 만들어서 다시 써요)
@@ -2223,6 +2288,20 @@
       link.rel = 'noopener';
       link.textContent = list.length === 0 ? '🗺 환승 경로 보기 (카카오맵) ↗' : '🗺 환승 포함 다른 경로 (카카오맵) ↗';
       summary.appendChild(link);
+
+      // 환승 경로는 TMAP 대중교통 (무료 하루 10건뿐이라 누를 때만 불러요)
+      var transitButton = document.createElement('button');
+      transitButton.type = 'button';
+      transitButton.className = 'transit-button' + (list.length === 0 ? ' big' : '');
+      transitButton.textContent = '🔁 환승 경로 찾기 (TMAP)';
+      summary.appendChild(transitButton);
+      var transitBox = document.createElement('div');
+      transitBox.className = 'transit-box';
+      summary.appendChild(transitBox);
+      transitButton.addEventListener('click', function () {
+        transitButton.disabled = true;
+        showTransit(origin, dest, transitBox, function () { transitButton.remove(); });
+      });
       resultList.appendChild(summary);
 
       list.forEach(function (o) {
@@ -2251,6 +2330,127 @@
     function openTripOption(o) {
       showStopCard(o.stop, o.stop.position);
       enterWait(o.stop, o.bus);
+    }
+
+    // ───────── 환승 경로 (TMAP 대중교통) ─────────
+    // 첫 번째로 탈 버스를 우리 실시간 도착 정보와 맞춰서, 그 버스를 기다리는 동안 다녀올 곳으로 이어 줘요
+    var transitCache = {};
+    function fetchTransit(origin, dest) {
+      // 출발·도착을 약 100m 단위로 맞춰서, 비슷한 구간은 저장해 둔 결과를 다시 써요 (서버에서도 하루 저장)
+      var r = function (v) { return v.toFixed(3); };
+      var q = 'sx=' + r(origin.position.getLng()) + '&sy=' + r(origin.position.getLat()) + '&ex=' + r(dest.position.getLng()) + '&ey=' + r(dest.position.getLat());
+      if (!transitCache[q]) {
+        transitCache[q] = fetch('/api/tmap?type=transit&' + q).then(function (res) {
+          return res.json().then(function (d) {
+            if (res.status === 429 || d.error === 'quota') return { quota: true };
+            if (d.error) throw new Error(d.error);
+            return d;
+          });
+        });
+        transitCache[q].catch(function () { delete transitCache[q]; });
+      }
+      return transitCache[q];
+    }
+
+    function showTransit(origin, dest, box, onDone) {
+      box.innerHTML = '';
+      addLine(box, 'transit-msg', '환승 경로를 찾는 중…');
+      fetchTransit(origin, dest).then(function (data) {
+        box.innerHTML = '';
+        onDone();
+        if (data.quota) {
+          addLine(box, 'transit-msg', '오늘 환승 검색 횟수(무료 하루 10건)를 다 썼어요. 위의 카카오맵 길찾기로 확인해 주세요.');
+          return;
+        }
+        if (!data.itineraries.length) {
+          addLine(box, 'transit-msg', data.message || '대중교통 경로를 찾지 못했어요.');
+          return;
+        }
+        data.itineraries.slice(0, 4).forEach(function (it) { box.appendChild(buildItinerary(it, dest)); });
+      }).catch(function () {
+        box.innerHTML = '';
+        onDone();
+        addLine(box, 'transit-msg', '환승 경로를 가져오지 못했어요. 잠시 후 다시 해 보세요.');
+      });
+    }
+
+    var MODE_ICONS = { WALK: '🚶', BUS: '🚌', SUBWAY: '🚇', EXPRESSBUS: '🚍', TRAIN: '🚆', AIRPLANE: '✈️', FERRY: '⛴' };
+
+    // 경로 하나:  약 9분 · 환승 0번 · 1,200원
+    //            🚶2분 → [노원09] 석계역 → 삼창아파트 (3정거장) → 🚶3분
+    //            🚌 노원09 · 4분 후 도착 (석계역)   [기다리며 다녀올 곳 ›]
+    function buildItinerary(it, dest) {
+      var card = document.createElement('div');
+      card.className = 'itinerary';
+      addLine(card, 'it-head', '약 ' + it.minutes + '분 · 환승 ' + it.transfers + '번' + (it.fare ? ' · ' + it.fare.toLocaleString() + '원' : '') + ' · 걷기 ' + it.walkMinutes + '분');
+      var legs = document.createElement('div');
+      legs.className = 'it-legs';
+      it.legs.forEach(function (leg, i) {
+        if (i > 0) legs.appendChild(document.createTextNode(' → '));
+        if (leg.mode === 'WALK') {
+          legs.appendChild(document.createTextNode('🚶' + leg.minutes + '분'));
+          return;
+        }
+        var chip = document.createElement('span');
+        chip.className = 'it-chip';
+        chip.style.background = leg.routeColor ? '#' + leg.routeColor : '#8a8a8a';
+        chip.textContent = (MODE_ICONS[leg.mode] || '') + ' ' + leg.route.split(':').pop();
+        legs.appendChild(chip);
+        legs.appendChild(document.createTextNode(' ' + leg.start.name + ' → ' + leg.end.name + (leg.stops ? ' (' + leg.stops + '정거장)' : '')));
+      });
+      card.appendChild(legs);
+
+      // 첫 번째로 타는 게 버스면 실시간 도착 정보와 연결
+      var first = it.legs.filter(function (l) { return l.mode !== 'WALK'; })[0];
+      if (first && first.mode === 'BUS') {
+        var live = document.createElement('div');
+        live.className = 'it-live';
+        live.textContent = '🚌 ' + first.route.split(':').pop() + ' 실시간 도착 정보 확인 중…';
+        card.appendChild(live);
+        findLiveBus(first).then(function (match) {
+          if (!match) { live.textContent = '🚌 ' + first.route.split(':').pop() + ' 실시간 도착 정보를 찾지 못했어요'; return; }
+          var arr = formatArrival(match.bus.arr1);
+          live.textContent = '🚌 ' + match.bus.route + ' · ' + (arr.wait ? arr.main : arr.main + ' 후 도착') + ' (' + match.stop.name + ') ';
+          var go = document.createElement('button');
+          go.type = 'button';
+          go.textContent = '기다리며 다녀올 곳 ›';
+          go.addEventListener('click', function () {
+            showStopCard(match.stop, match.stop.position);
+            enterWait(match.stop, match.bus);
+            var note = waitView.querySelector('.wait-dest');
+            note.hidden = false;
+            note.textContent = '🏁 ' + dest.label + ' · 환승 경로 약 ' + it.minutes + '분 (환승 ' + it.transfers + '번)';
+          });
+          live.appendChild(go);
+        });
+      }
+      return card;
+    }
+
+    // TMAP의 탑승 정류장(좌표)과 노선 이름으로 우리 정류장·실시간 버스 찾기 (정류장 번호 체계가 달라서 위치로 맞춰요)
+    function findLiveBus(leg) {
+      var name = leg.route.split(':').pop().trim(); // "마을:노원09" → "노원09"
+      var sameRoute = function (b) { return b.route === name || b.route.replace(/[가-힣]+$/, '') === name; };
+      return fetch('/api/bus?type=nearby&lat=' + leg.start.lat + '&lng=' + leg.start.lng + '&radius=120')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var stops = (data.stations || []).slice(0, 3);
+          return Promise.all(stops.map(function (stop) {
+            stop.position = new kakao.maps.LatLng(stop.lat, stop.lng);
+            return fetch('/api/bus?type=arrivals&id=' + stop.id + '&arsId=' + stop.arsId + '&seoul=' + (stop.seoul ? 1 : 0) + '&gg=' + (stop.gg ? 1 : 0))
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                return (d.buses || []).filter(sameRoute).map(function (bus) { return { stop: stop, bus: bus }; });
+              })
+              .catch(function () { return []; });
+          }));
+        })
+        .then(function (lists) {
+          var all = [].concat.apply([], lists);
+          all.sort(function (a, b) { return formatArrival(a.bus.arr1).order - formatArrival(b.bus.arr1).order; });
+          return all[0] || null;
+        })
+        .catch(function () { return null; });
     }
 
     function showTripMessage(text) {
