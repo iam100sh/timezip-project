@@ -90,6 +90,12 @@
     #results .trip-summary { display: block; cursor: default; background: var(--bg); }
     #results .trip-summary b { color: var(--text); }
     #results .trip-summary small { display: block; color: var(--muted); margin-top: 2px; }
+    #results .location-problem { cursor: default; color: var(--text); }
+    .lp-title { font-weight: 700; margin-bottom: 4px; }
+    .lp-text { font-size: 0.85rem; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+    .lp-buttons { display: flex; gap: 6px; margin-top: 10px; }
+    .lp-buttons button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 0.85rem; cursor: pointer; }
+    .lp-buttons button:first-child { background: var(--accent); color: #fff; }
     .transit-button { display: block; width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface); color: var(--accent); font-size: 0.85rem; font-weight: 600; cursor: pointer; }
     .transit-button.big { background: var(--accent); color: #fff; }
     .transit-button:disabled { opacity: 0.6; cursor: default; }
@@ -1068,7 +1074,14 @@
       }
       myLocationButton.classList.add('loading');
 
-      navigator.geolocation.getCurrentPosition(function (pos) {
+      // 1차: GPS(고정밀)로 8초 → 안 되면 2차: 와이파이·기지국 위치(저정밀)로 한 번 더 (노트북·실내에서 1차가 자주 실패해요)
+      var tryLowAccuracy = function (firstErr) {
+        if (firstErr && firstErr.code === firstErr.PERMISSION_DENIED) return failed(firstErr); // 권한이 없으면 다시 해도 안 돼요
+        navigator.geolocation.getCurrentPosition(succeeded, failed, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 });
+      };
+      navigator.geolocation.getCurrentPosition(succeeded, tryLowAccuracy, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+
+      function succeeded(pos) {
         myLocationButton.classList.remove('loading');
         var here = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
         myPosition = here; // 이제부터 검색은 내 주변에서 해요
@@ -1085,15 +1098,23 @@
         if (onDone) { onDone(here); return; }
         if (map.getLevel() > 4) map.setLevel(4);
         map.panTo(here);
-      }, function (err) {
+      }
+
+      function failed(err) {
         myLocationButton.classList.remove('loading');
         if (onFail) { onFail(err); return; }
-        if (err.code === err.PERMISSION_DENIED) {
-          alert('위치 권한이 꺼져 있어요. 브라우저 설정에서 이 사이트의 위치 권한을 허용해 주세요.');
-        } else {
-          alert('현재 위치를 찾지 못했어요. 잠시 후 다시 해 보세요.');
-        }
-      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+        alert(locationErrorText(err));
+      }
+    }
+
+    // 위치를 못 찾은 이유를 사람이 알아듣게
+    function locationErrorText(err) {
+      if (err && err.code === 1) {
+        return '위치 권한이 꺼져 있어요. 주소창 왼쪽 자물쇠(또는 aA) 버튼 → 위치 → 허용으로 바꿔 주세요. ' +
+          '아이폰은 설정 → 개인정보 보호 및 보안 → 위치 서비스 → Safari 웹 사이트도 켜져 있어야 해요.';
+      }
+      if (err && err.code === 3) return '내 위치를 찾는 데 시간이 너무 오래 걸렸어요. 창가나 밖에서 다시 시도해 보세요.';
+      return '지금은 내 위치를 찾을 수 없어요. 기기의 위치 서비스가 켜져 있는지 확인해 주세요.';
     }
 
     // ───────── 버스정류장 ─────────
@@ -2155,6 +2176,7 @@
       resolveOrigin(tripFrom.value.trim(), function (origin) {
         if (thisRequest !== tripRequest) return;
         if (!origin) return showTripMessage('출발지 "' + tripFrom.value.trim() + '"을(를) 찾지 못했어요.');
+        if (origin.locationError) return showLocationProblem(origin.locationError);
         places.keywordSearch(toText, function (data, status) {
           if (thisRequest !== tripRequest) return;
           if (status !== kakao.maps.services.Status.OK) return showTripMessage('목적지 "' + toText + '"을(를) 찾지 못했어요.');
@@ -2169,9 +2191,14 @@
     function resolveOrigin(text, done) {
       if (!text) {
         if (myPosition) return done({ label: '내 위치', name: '내 위치', position: myPosition });
-        showTripMessage('내 위치를 찾는 중…');
-        locateMe(function (here) { done({ label: '내 위치', name: '내 위치', position: here }); }, function () {
-          done({ label: '지도 가운데', name: '지도 가운데', position: map.getCenter() }); // 위치 권한이 없으면
+        showTripMessage('📍 내 위치를 찾는 중… (위치 권한을 물어보면 "허용"을 눌러 주세요)');
+        tripFrom.placeholder = '내 위치 찾는 중…';
+        locateMe(function (here) {
+          tripFrom.placeholder = '내 위치 ✓';
+          done({ label: '내 위치', name: '내 위치', position: here });
+        }, function (err) {
+          tripFrom.placeholder = '출발지 (비우면 내 위치)';
+          done({ locationError: err }); // 조용히 다른 곳에서 출발하지 않고, 이유를 알려줘요
         });
         return;
       }
@@ -2462,6 +2489,39 @@
           return all[0] || null;
         })
         .catch(function () { return null; });
+    }
+
+    // 내 위치를 못 찾았을 때: 이유 + "다시 시도" / "지도 가운데에서 출발" / 출발지 직접 입력 안내
+    function showLocationProblem(err) {
+      showTripMessage('');
+      var li = resultList.querySelector('li');
+      li.className = 'message location-problem';
+      addLine(li, 'lp-title', '📍 내 위치를 찾지 못했어요');
+      addLine(li, 'lp-text', locationErrorText(err));
+      addLine(li, 'lp-text', '출발지 칸에 "석계역"처럼 장소 이름을 직접 써도 돼요.');
+      var buttons = document.createElement('div');
+      buttons.className = 'lp-buttons';
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = '다시 시도';
+      retry.addEventListener('click', function () { document.querySelector('.trip-go').click(); });
+      var center = document.createElement('button');
+      center.type = 'button';
+      center.textContent = '지도 가운데에서 출발';
+      center.addEventListener('click', function () {
+        var thisRequest = ++tripRequest;
+        var toText = tripTo.value.trim();
+        var origin = { label: '지도 가운데', name: '지도 가운데', position: map.getCenter() };
+        places.keywordSearch(toText, function (data, status) {
+          if (thisRequest !== tripRequest) return;
+          if (status !== kakao.maps.services.Status.OK) return showTripMessage('목적지 "' + toText + '"을(를) 찾지 못했어요.');
+          var top = data[0];
+          planTrip(origin, { label: toText, name: top.place_name, address: top.road_address_name || top.address_name, position: new kakao.maps.LatLng(top.y, top.x) }, thisRequest);
+        }, { location: origin.position });
+      });
+      buttons.appendChild(retry);
+      buttons.appendChild(center);
+      li.appendChild(buttons);
     }
 
     function showTripMessage(text) {
