@@ -192,6 +192,7 @@ function fromSeoul(b) {
     arr2: parseSeoulMessage(b.arrmsg2),
     last1: last1,
     lowFloor1: b.busType1 === '1',
+    lowFloor2: b.busType2 === '1',   // 두 번째 버스도 저상인지
     crowded1: b.congestion1 === '5' || b.congestion1 === '6',
     seats1: null,
     firstTime: formatTime(b.firstTm),
@@ -245,6 +246,7 @@ function fromGG(b) {
     arr2: parseGGArrival(b.predictTime2, b.locationNo2, b.flag),
     last1: false,
     lowFloor1: String(b.lowPlate1) === '1',
+    lowFloor2: String(b.lowPlate2) === '1',
     crowded1: String(b.crowded1) === '3' || String(b.crowded1) === '4', // 1 여유, 2 보통, 3 혼잡, 4 매우혼잡
     seats1: seatCount(b.remainSeatCnt1),
     firstTime: '',

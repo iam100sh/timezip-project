@@ -52,6 +52,12 @@
     }
     #trip-form[hidden], #search-form[hidden] { display: none; } /* 탭에서 고르지 않은 쪽은 숨겨요 */
     .top-row { display: flex; align-items: center; gap: 12px; }
+    #low-toggle {
+      padding: 5px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface);
+      color: var(--muted); font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+    }
+    #low-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+    .low-note { padding: 8px 16px; font-size: 0.8rem; color: var(--accent); background: var(--accent-soft); }
     .mode-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--line); }
     .mode-tabs button {
       padding: 5px 10px; border: none; border-radius: 7px; background: none;
@@ -496,6 +502,7 @@
         <button type="button" role="tab" data-mode="trip" class="on" aria-selected="true">🚌 버스 길찾기</button>
         <button type="button" role="tab" data-mode="place" aria-selected="false">🔍 장소 검색</button>
       </div>
+      <button type="button" id="low-toggle" aria-pressed="false" title="저상버스만 보기">♿ 저상버스</button>
     </div>
     <!-- 첫 화면: 출발지 → 목적지 → 버스 찾기 -->
     <form id="trip-form" autocomplete="off">
@@ -1471,7 +1478,7 @@
       spSub.textContent = stopLabel(stop, towards);
 
       // 곧 오는 순 → 같으면 버스 종류 순 → 번호 순
-      buses.forEach(function (b) { b._arr = formatArrival(b.arr1); });
+      buses.forEach(function (b) { b._arr = formatArrival(riderArr(b)); }); // 저상버스만 보기면 저상버스 도착 기준
       buses.sort(function (a, b) {
         return (a._arr.order - b._arr.order) ||
           (routeRank(a) - routeRank(b)) ||
@@ -1487,8 +1494,16 @@
     // 버스 목록 그리기. 목적지가 있으면 목적지 가는 버스만 위에, 나머지는 접어 둬요
     function renderBusList(stop, buses) {
       spList.innerHTML = '';
+      var allBuses = buses; // 접기/펼치기 할 때 다시 그릴 원래 목록
+      var notLow = [];
+      if (lowFloorOnly) { // ♿ 저상버스만: 지금 저상버스가 오는 노선만 위에, 나머지는 접어 둬요
+        notLow = buses.filter(function (b) { return !lowWhich(b); });
+        buses = buses.filter(function (b) { return lowWhich(b); });
+        addLine(spList, 'low-note', '♿ 저상버스만 보는 중 · 지금 저상버스가 오는 노선 ' + buses.length + '개');
+      }
       if (!destination) {
         buses.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+        appendNotLow(stop, notLow, allBuses);
         return;
       }
       // 같은 노선이 양쪽 방향으로 서면 반대 방향도 "종점 돌아서 간다"로 나와요 → 정거장이 가장 적은 방향만 남겨요
@@ -1523,9 +1538,61 @@
         spList.appendChild(toggle);
         if (showOthers) others.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
       }
+      appendNotLow(stop, notLow, allBuses);
       updateDestInfo(going.length, checking.length > 0);
     }
     var showOthers = false;
+    var showNotLow = false;
+
+    function appendNotLow(stop, notLow, allBuses) {
+      if (!notLow.length) return;
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'others-toggle';
+      toggle.textContent = (showNotLow ? '▲ ' : '▼ ') + '지금 저상버스가 안 오는 노선 ' + notLow.length + '개 ' + (showNotLow ? '접기' : '보기');
+      toggle.addEventListener('click', function () { showNotLow = !showNotLow; renderBusList(stop, allBuses); });
+      spList.appendChild(toggle);
+      if (showNotLow) notLow.forEach(function (bus) { spList.appendChild(buildBusRow(bus)); });
+    }
+
+    // ───────── ♿ 저상버스 ─────────
+    // 실시간 도착 정보에는 첫 번째·두 번째 버스가 저상인지 들어 있어요 (lowFloor1, lowFloor2)
+    var lowFloorOnly = false;
+    try { lowFloorOnly = localStorage.getItem('timezip.lowFloor') === '1'; } catch (e) { /* 저장 못 하는 브라우저 */ }
+    var lowToggle = document.getElementById('low-toggle');
+
+    function isComing(arr) { return !!arr && (arr.status === 'running' || arr.status === 'soon'); }
+
+    // 오고 있는 저상버스가 몇 번째인지 (1, 2) · 없으면 null
+    function lowWhich(bus) {
+      if (bus.lowFloor1 && isComing(bus.arr1)) return 1;
+      if (bus.lowFloor2 && isComing(bus.arr2)) return 2;
+      return null;
+    }
+
+    // 내가 탈 수 있는 첫 버스의 도착 정보 (저상버스만 보기면 첫 번째 저상버스)
+    function riderArr(bus) {
+      if (!lowFloorOnly) return bus.arr1;
+      var which = lowWhich(bus);
+      return which === 1 ? bus.arr1 : which === 2 ? bus.arr2 : { status: 'none', text: '저상버스 정보 없음' };
+    }
+
+    function setLowFloor(on) {
+      lowFloorOnly = on;
+      try { localStorage.setItem('timezip.lowFloor', on ? '1' : '0'); } catch (e) { /* 무시 */ }
+      lowToggle.classList.toggle('on', on);
+      lowToggle.setAttribute('aria-pressed', String(on));
+      showNotLow = false;
+      if (selectedStop && lastBuses.length) renderArrivals(selectedStop, lastBuses); // 정류장 패널
+      if (waitState) { setupBusChoice(waitState.bus); tickWait(true); }                // 어느 버스를 탈까요?
+      if (resultList.querySelector('.trip-summary') && tripTo.value.trim()) {           // 버스 길찾기 결과는 다시 계산
+        document.querySelector('.trip-go').click();
+      }
+      showBusHint(on ? '♿ 저상버스 기준으로 보여 드려요' : '모든 버스를 보여 드려요', 2500);
+    }
+    lowToggle.addEventListener('click', function () { setLowFloor(!lowFloorOnly); });
+    lowToggle.classList.toggle('on', lowFloorOnly);
+    lowToggle.setAttribute('aria-pressed', String(lowFloorOnly));
 
     // ───────── 목적지까지 가는 버스 찾기 ─────────
     // 목적지 위치를 카카오에서 찾고, 이 정류장 버스마다 "다음 정류장들 중 목적지 500m 안에 서는 곳"이 있는지 노선 목록으로 확인해요
@@ -1713,8 +1780,9 @@
     function buildBusRow(bus) {
       var type = /^N/.test(bus.route) ? { name: '심야', color: '#1f2a44' } // N13 같은 심야버스
         : ROUTE_TYPES[bus.type] || { name: '', color: '#8a8a8a' };
-      var arr = bus._arr || formatArrival(bus.arr1);
-      var next = formatArrival(bus.arr2);
+      var arr = bus._arr || formatArrival(riderArr(bus));
+      var next = lowFloorOnly ? { wait: true } : formatArrival(bus.arr2); // 저상버스만 보기면 "다음 버스"는 빼요
+      var which = lowWhich(bus);
 
       var row = document.createElement('div');
       row.className = 'bus-row' + (arr.ended ? ' ended' : '');
@@ -1743,7 +1811,8 @@
       var badges = document.createElement('div');
       badges.className = 'bus-badges';
       if (bus.last1) addBadge(badges, 'last', '막차');
-      if (bus.lowFloor1 && !arr.wait) addBadge(badges, 'low', '저상');
+      if (lowFloorOnly && which === 2) addBadge(badges, 'low', '♿ 두 번째 버스가 저상');
+      else if ((lowFloorOnly && which === 1) || (bus.lowFloor1 && !arr.wait)) addBadge(badges, 'low', '저상');
       if (bus.crowded1 && !arr.wait) addBadge(badges, 'crowded', '혼잡'); // 여유·보통은 대부분이라 혼잡할 때만 표시
       if (bus.seats1 != null && !arr.wait) addBadge(badges, bus.seats1 <= 5 ? 'seats few' : 'seats', '빈자리 ' + bus.seats1); // 경기 좌석버스
       if (arr.ended && bus.firstTime) addBadge(badges, '', '첫차 ' + bus.firstTime);
@@ -1948,7 +2017,7 @@
 
     function enterWait(stop, bus) {
       if (!stop) return;
-      var arr = bus.arr1 || {};
+      var arr = riderArr(bus) || {};
       var liveEndAt = arrivalTime(arr);
       waitState = {
         stop: stop, bus: bus, liveEndAt: liveEndAt, manual: !liveEndAt,
@@ -2056,12 +2125,13 @@
       waitState.afterLast = false;
       var a1 = arrivalTime(bus.arr1 || {});
       var a2 = arrivalTime(bus.arr2 || {});
-      if (a1) list.push({ at: a1, live: true });
-      if (a2 && (!a1 || a2 > a1 + 30000)) list.push({ at: a2, live: true });
+      var lastLive = a2 || a1; // 어림은 저상 여부와 상관없이 마지막 실시간 버스부터 이어서
+      if (a1 && (!lowFloorOnly || bus.lowFloor1)) list.push({ at: a1, live: true });
+      if (a2 && (!a1 || a2 > a1 + 30000) && (!lowFloorOnly || bus.lowFloor2)) list.push({ at: a2, live: true });
       var noMore = bus.last1 || (bus.arr2 && bus.arr2.status === 'ended'); // 첫 버스가 막차면 그 뒤는 없어요
       var term = waitState.term;
       var lastAt = lastBusTime(waitState.lastTime);
-      var base = list.length ? list[list.length - 1].at : null;
+      var base = lastLive;
       if (base && term && !noMore) {
         for (var k = 1; list.length < 6; k++) {
           var t = base + k * term * 60000;
@@ -2082,6 +2152,11 @@
       d.setHours(Number(m[1]), Number(m[2]), 0, 0);
       if (Number(m[1]) < 4) d.setDate(d.getDate() + (new Date().getHours() >= 4 ? 1 : 0)); // 새벽 막차
       return d.getTime();
+    }
+
+    // "두 번째 버스" / 저상버스만 보기면 "첫 번째 저상버스"
+    function busOrdinal(c) {
+      return ORDINALS[c.n - 1] + (lowFloorOnly && c.live ? ' 저상버스' : ' 버스');
     }
 
     function freeMinutesAt(at) {
@@ -2114,12 +2189,12 @@
       wmHint.hidden = false;
       if (c) {
         chooseCandidate(c);
-        wmHint.textContent = minutes + '분 다녀오기 → ' + ORDINALS[c.n - 1] + ' 버스(' + (c.live ? '' : '약 ') +
+        wmHint.textContent = minutes + '분 다녀오기 → ' + busOrdinal(c) + '(' + (c.live ? '' : '약 ') +
           Math.max(0, Math.round((c.at - Date.now()) / 60000)) + '분 후)를 타면 돼요 · 다녀올 시간 ' + freeMinutesAt(c.at) + '분';
       } else {
         var last = waitState.candidates[waitState.candidates.length - 1];
         chooseCandidate(last);
-        wmHint.textContent = minutes + '분 뒤에 탈 수 있는 버스를 찾지 못해서 가장 늦은 ' + ORDINALS[last.n - 1] + ' 버스로 골랐어요' +
+        wmHint.textContent = minutes + '분 뒤에 탈 수 있는 버스를 찾지 못해서 가장 늦은 ' + busOrdinal(last) + '로 골랐어요' +
           (waitState.afterLast ? ' (막차 이후)' : '');
       }
       tickWait(true);
@@ -2139,11 +2214,11 @@
         main.className = 'bc-main';
         var name = document.createElement('div');
         name.className = 'bc-name';
-        name.textContent = ORDINALS[c.n - 1] + ' 버스';
+        name.textContent = busOrdinal(c);
         if (!c.live) {
           var est = document.createElement('span');
           est.className = 'bc-est';
-          est.textContent = '어림';
+          est.textContent = lowFloorOnly ? '어림 · 저상 모름' : '어림';
           name.appendChild(est);
         }
         main.appendChild(name);
@@ -2182,7 +2257,7 @@
       var same = buses.filter(function (x) { return x.route === b.route && x.direction === b.direction; })[0];
       if (!same) return;
       waitState.bus = same;
-      waitState.liveEndAt = arrivalTime(same.arr1 || {});
+      waitState.liveEndAt = arrivalTime(riderArr(same) || {});
       if (waitState.candidates && waitState.candidates.length) { // 탈 버스를 골라 둔 상태면 새 정보로 다시 맞춰요
         refreshCandidates();
         tickWait(true);
@@ -2201,7 +2276,7 @@
       var freeMin = Math.floor(leftSec / 60) - BUFFER_MIN; // 다녀올 수 있는 시간 (분)
 
       if (waitState.chosen) {
-        waitClockLabel.textContent = ORDINALS[waitState.chosen.n - 1] + ' 버스까지' + (waitState.chosen.live ? '' : ' (어림)');
+        waitClockLabel.textContent = busOrdinal(waitState.chosen) + '까지' + (waitState.chosen.live ? '' : ' (어림)');
         waitBig.textContent = Math.floor(leftSec / 60) + '분';
         waitSec.textContent = (leftSec % 60) + '초';
       } else if (!waitState.manual) {
@@ -2676,7 +2751,9 @@
 
     // 걸어가서 탈 수 있는 버스 고르기: 첫 버스가 걷는 시간보다 먼저 오면 두 번째 버스
     function makeOption(stop, bus, trip, walkTo) {
-      var waits = [bus.arr1, bus.arr2].map(arrivalMinutes);
+      var waits = [bus.arr1, bus.arr2].map(function (arr, i) { // 저상버스만 보기면 저상인 버스만 쳐요
+        return !lowFloorOnly || (i === 0 ? bus.lowFloor1 : bus.lowFloor2) ? arrivalMinutes(arr) : null;
+      });
       var wait = null;
       for (var i = 0; i < waits.length; i++) {
         if (waits[i] !== null && waits[i] >= walkTo) { wait = waits[i]; break; }
@@ -2768,7 +2845,8 @@
             { mode: 'BUS', minutes: ride, label: o.bus.route, color: type.color, text: type.text, board: o.stop.name, alight: o.trip.station.name, stops: o.trip.stops },
             { mode: 'WALK', minutes: o.trip.walk }
           ],
-          live: Promise.resolve(o.wait === null ? '도착 정보 없음' : o.wait < 1 ? '곧 도착' : Math.round(o.wait) + '분 후'),
+          live: Promise.resolve(o.wait === null ? (lowFloorOnly ? '♿ 저상버스 없음' : '도착 정보 없음') : (lowFloorOnly ? '♿ ' : '') + (o.wait < 1 ? '곧 도착' : Math.round(o.wait) + '분 후')),
+          noneText: lowFloorOnly ? '지금 저상버스 없음' : '도착 정보 없음',
           onSelect: function () { drawOptionRoute(o); },
           onWait: function () { openTripOption(o); }
         });
@@ -2803,7 +2881,7 @@
       var min = document.createElement('span');
       min.className = 'rc-min';
       if (spec.minutes === null) {
-        min.textContent = '도착 정보 없음';
+        min.textContent = spec.noneText || '도착 정보 없음';
       } else {
         var hours = Math.floor(spec.minutes / 60), mins = spec.minutes % 60;
         min.innerHTML = (hours ? '<b>' + hours + '</b>시간 ' : '') + '<b>' + mins + '</b>분';
@@ -3122,16 +3200,16 @@
         live: match.then(function (m) {
           if (!first || first.mode !== 'BUS') return '';
           if (!m) return '실시간 정보 없음';
-          var arr = formatArrival(m.bus.arr1);
-          return arr.wait ? arr.main : arr.main === '곧 도착' ? '곧 도착' : arr.main + ' 후';
+          var arr = formatArrival(riderArr(m.bus));
+          return arr.wait ? arr.main : (lowFloorOnly ? '♿ ' : '') + (arr.main === '곧 도착' ? '곧 도착' : arr.main + ' 후');
         }),
         onSelect: function () { drawItinerary(it); },
         onWait: null
       });
       match.then(function (m) {
         if (!m) { enableCardWait(card, null, first && first.mode === 'BUS' ? '실시간 버스 정보를 찾지 못했어요' : '첫 구간이 버스가 아니에요'); return; }
-        var arr = formatArrival(m.bus.arr1);
-        if (arr.wait) { enableCardWait(card, null, m.bus.route + ' · 지금은 ' + arr.main); return; } // 운행 종료·출발 대기
+        var arr = formatArrival(riderArr(m.bus));
+        if (arr.wait) { enableCardWait(card, null, m.bus.route + ' · 지금은 ' + arr.main); return; } // 운행 종료·출발 대기·저상버스 없음
         // 도착 시각 = 정류장까지 걷기와 버스 기다리기 중 긴 쪽 + 나머지 이동 시간
         var firstWalk = it.legs[0].mode === 'WALK' ? it.legs[0].minutes : 0;
         var waitMin = arr.order / 60;
@@ -3167,7 +3245,7 @@
         })
         .then(function (lists) {
           var all = [].concat.apply([], lists);
-          all.sort(function (a, b) { return formatArrival(a.bus.arr1).order - formatArrival(b.bus.arr1).order; });
+          all.sort(function (a, b) { return formatArrival(riderArr(a.bus)).order - formatArrival(riderArr(b.bus)).order; });
           return all[0] || null;
         })
         .catch(function () { return null; });
