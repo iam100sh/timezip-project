@@ -7,6 +7,8 @@
 //       → 정류장을 지나는 버스와 도착 정보 (서울 버스 + 경기 버스)
 //   /api/bus?type=route&routeId=100100147
 //       → 노선이 지나는 정류장 목록 (순서대로). 목적지까지 가는 버스인지 확인할 때 써요
+//   /api/bus?type=routeinfo&routeId=222000222
+//       → 지금 시간대의 배차 간격(분)과 막차 시각 (세 번째 이후 버스를 어림할 때)
 //   /api/bus?type=routepath&routeId=100100147
 //       → 노선이 실제로 다니는 길 모양 [[경도, 위도], ...] (지도에 버스 경로 선을 그릴 때)
 //
@@ -110,6 +112,28 @@ module.exports = async function handler(req, res) {
       return send(res, 200, { routeId: routeId, stations: stations }, 86400); // 노선은 거의 안 바뀌니 하루 캐시
     }
 
+    if (type === 'routeinfo') {
+      const routeId = url.searchParams.get('routeId') || '';
+      if (!/^\d{6,12}$/.test(routeId)) return send(res, 400, { error: 'routeId(노선 ID)가 필요해요.' });
+      if (routeId.charAt(0) === '2') {
+        const items = await callGG('busrouteservice/v2/getBusRouteInfoItemv2', { routeId: routeId }, key, 'busRouteInfoItem');
+        const i = items[0] || {};
+        // 한국 시간 기준 요일·시간대에 맞는 배차를 골라요 (출퇴근 7~9시, 17~19시는 peak)
+        const now = new Date(Date.now() + 9 * 3600000);
+        const day = now.getUTCDay(); // 0 일, 6 토
+        const hour = now.getUTCHours();
+        const peak = (hour >= 7 && hour < 9) || (hour >= 17 && hour < 19);
+        const prefix = day === 0 ? 'sun' : day === 6 ? 'sat' : '';
+        const pick = (name) => Number(prefix ? i[prefix + name.charAt(0).toUpperCase() + name.slice(1)] : i[name]) || null;
+        const term = (peak ? pick('peekAlloc') : pick('nPeekAlloc')) || pick('nPeekAlloc') || pick('peekAlloc');
+        const lasts = [i[(prefix || '') + (prefix ? 'UpLastTime' : 'upLastTime')], i[(prefix || '') + (prefix ? 'DownLastTime' : 'downLastTime')]].filter(Boolean).sort();
+        return send(res, 200, { routeId: routeId, term: term, lastTime: lasts.length ? lasts[lasts.length - 1] : '' }, 1800);
+      }
+      const items = await callSeoulRoute('getRouteInfo', { busRouteId: routeId }, key);
+      const i = items[0] || {};
+      return send(res, 200, { routeId: routeId, term: Number(i.term) || null, lastTime: formatTime(String(i.lastBusTm || '').slice(8)) }, 1800);
+    }
+
     if (type === 'routepath') {
       const routeId = url.searchParams.get('routeId') || '';
       if (!/^\d{6,12}$/.test(routeId)) return send(res, 400, { error: 'routeId(노선 ID)가 필요해요.' });
@@ -171,7 +195,8 @@ function fromSeoul(b) {
     crowded1: b.congestion1 === '5' || b.congestion1 === '6',
     seats1: null,
     firstTime: formatTime(b.firstTm),
-    lastTime: formatTime(b.lastTm)
+    lastTime: formatTime(b.lastTm),
+    term: Number(b.term) || null      // 배차 간격(분)
   };
 }
 
@@ -223,7 +248,8 @@ function fromGG(b) {
     crowded1: String(b.crowded1) === '3' || String(b.crowded1) === '4', // 1 여유, 2 보통, 3 혼잡, 4 매우혼잡
     seats1: seatCount(b.remainSeatCnt1),
     firstTime: '',
-    lastTime: ''
+    lastTime: '',
+    term: null                        // 경기 버스 배차는 routeinfo로 따로 받아요
   };
 }
 
@@ -259,6 +285,7 @@ function mergeBuses(seoulBuses, ggBuses) {
     gg.nextStation = seoul.nextStation;
     gg.firstTime = seoul.firstTime;
     gg.lastTime = seoul.lastTime;
+    gg.term = seoul.term;
     result[i] = gg;
   });
   return result;

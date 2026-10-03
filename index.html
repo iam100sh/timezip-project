@@ -298,6 +298,26 @@
     .wait-clock .big { font-size: 2.6rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
     .wait-clock .sec { font-size: 1rem; color: var(--muted); font-weight: 600; }
     .wait-free { margin-top: 6px; font-size: 0.95rem; }
+    .bus-choice { margin-top: 12px; }
+    .bus-choice[hidden] { display: none; }
+    .bc-title { font-size: 0.85rem; font-weight: 700; margin-bottom: 6px; }
+    .bc-list { display: flex; flex-direction: column; gap: 4px; }
+    .bc-row {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; text-align: left;
+      border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit;
+    }
+    .bc-row .bc-radio { width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; border: 2px solid var(--line); }
+    .bc-row.on { border-color: var(--accent); background: var(--accent-soft); }
+    .bc-row.on .bc-radio { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 45%, transparent 50%); }
+    .bc-row .bc-main { flex: 1; min-width: 0; }
+    .bc-row .bc-name { font-size: 0.88rem; font-weight: 600; }
+    .bc-row .bc-when { font-size: 0.78rem; color: var(--muted); }
+    .bc-row .bc-est { margin-left: 4px; padding: 0 5px; border-radius: 6px; background: var(--line); font-size: 0.7rem; color: var(--muted); }
+    .bc-row .bc-free { flex-shrink: 0; font-size: 0.82rem; font-weight: 700; color: var(--accent); white-space: nowrap; }
+    .bc-row .bc-free.none { color: var(--muted); font-weight: 400; }
+    .bc-note { margin-top: 6px; font-size: 0.75rem; color: var(--muted); line-height: 1.5; }
+    .wm-hint { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--bg); font-size: 0.8rem; color: var(--text); }
+    .wm-hint[hidden] { display: none; }
     .reminder {
       display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 10px;
       background: var(--accent-soft); border: 1px solid var(--accent);
@@ -549,11 +569,17 @@
             <div class="rm-text"><b class="rm-title"></b><span class="rm-left"></span></div>
             <button type="button" class="rm-cancel">취소</button>
           </div>
+          <div class="bus-choice" hidden>
+            <div class="bc-title">어느 버스를 탈까요?</div>
+            <div class="bc-list"></div>
+            <div class="bc-note"></div>
+          </div>
           <div class="wait-manual">
-            <span>시간 직접 정하기</span>
+            <span class="wm-label">시간 직접 정하기</span>
             <input type="range" min="3" max="60" step="1" value="10" aria-label="남은 시간 직접 정하기(분)">
             <button type="button" class="wait-live" hidden>실시간으로</button>
           </div>
+          <div class="wm-hint" hidden></div>
         </div>
         <div class="wait-filters"></div>
         <div class="wait-filters wait-subfilters" hidden></div>
@@ -1853,6 +1879,10 @@
     waitView.querySelector('.wait-back').addEventListener('click', function () { exitWait(); });
     waitSlider.addEventListener('input', function () {
       if (!waitState) return;
+      if (waitState.candidates && waitState.candidates.length) { // 버스 시간이 있으면: 그 시간을 다녀올 수 있는 버스를 골라 줘요
+        pickBusForMinutes(Number(waitSlider.value));
+        return;
+      }
       waitState.manual = true;
       waitState.endAt = Date.now() + (Number(waitSlider.value) + BUFFER_MIN) * 60000; // "나 N분 있어" → 다녀올 시간이 N분
       waitLiveButton.hidden = !waitState.liveEndAt;
@@ -1927,6 +1957,7 @@
       };
       buildGroupFilters();
       waitLiveButton.hidden = true;
+      setupBusChoice(bus);
 
       // 버스 표시
       waitBusEl.innerHTML = '';
@@ -1966,6 +1997,178 @@
       infowindow.close();
     }
 
+    // ───────── 어느 버스를 탈까요? ─────────
+    // 첫 번째·두 번째 버스는 실시간, 세 번째부터는 "두 번째 버스 + 배차 간격 × n"으로 어림해요 (막차 이후는 빼요).
+    // 고른 버스 시각(endAt)에 맞춰 시계, 다녀올 곳, 돌아가세요 알림이 모두 움직여요.
+    var ORDINALS = ['첫 번째', '두 번째', '세 번째', '네 번째', '다섯 번째', '여섯 번째'];
+    var CHOICE_AHEAD_MIN = 90;     // 지금부터 이 시간 안의 버스까지만 보여줘요
+    var MIN_WORTH_GOING = 5;       // 처음에 고를 버스: 다녀올 시간이 이만큼은 되는 첫 버스
+    var busChoice = waitView.querySelector('.bus-choice');
+    var bcList = busChoice.querySelector('.bc-list');
+    var bcNote = busChoice.querySelector('.bc-note');
+    var wmLabel = waitView.querySelector('.wm-label');
+    var wmHint = waitView.querySelector('.wm-hint');
+    var routeInfoCache = {};
+
+    function setupBusChoice(bus) {
+      waitState.term = bus.term || null;
+      waitState.lastTime = bus.lastTime || '';
+      waitState.candidates = buildCandidates(bus);
+      wmHint.hidden = true;
+      if (!waitState.candidates.length) { // 지금 오는 버스가 없으면 예전처럼 시간을 직접 정해요
+        busChoice.hidden = true;
+        wmLabel.textContent = '시간 직접 정하기';
+        waitState.chosen = null;
+        return;
+      }
+      busChoice.hidden = false;
+      wmLabel.textContent = '다녀올 시간으로 고르기';
+      waitState.manual = false;
+      var worth = waitState.candidates.filter(function (c) { return freeMinutesAt(c.at) >= MIN_WORTH_GOING; })[0];
+      chooseCandidate(worth || waitState.candidates[0]);
+
+      // 서울 버스는 배차가 도착 정보에 들어 있고, 경기 버스는 노선 정보에서 받아와요
+      if (!waitState.term || bus.type.charAt(0) === 'G') {
+        var state = waitState;
+        fetchRouteInfo(bus.routeId).then(function (info) {
+          if (waitState !== state || !info) return;
+          waitState.term = waitState.term || info.term;
+          waitState.lastTime = waitState.lastTime || info.lastTime;
+          refreshCandidates();
+          tickWait(true);
+        });
+      }
+    }
+
+    function fetchRouteInfo(routeId) {
+      if (!routeId) return Promise.resolve(null);
+      if (!routeInfoCache[routeId]) {
+        routeInfoCache[routeId] = fetch('/api/bus?type=routeinfo&routeId=' + routeId)
+          .then(function (r) { return r.json(); })
+          .then(function (d) { return d.error ? null : d; })
+          .catch(function () { delete routeInfoCache[routeId]; return null; });
+      }
+      return routeInfoCache[routeId];
+    }
+
+    function buildCandidates(bus) {
+      var list = [];
+      waitState.afterLast = false;
+      var a1 = arrivalTime(bus.arr1 || {});
+      var a2 = arrivalTime(bus.arr2 || {});
+      if (a1) list.push({ at: a1, live: true });
+      if (a2 && (!a1 || a2 > a1 + 30000)) list.push({ at: a2, live: true });
+      var noMore = bus.last1 || (bus.arr2 && bus.arr2.status === 'ended'); // 첫 버스가 막차면 그 뒤는 없어요
+      var term = waitState.term;
+      var lastAt = lastBusTime(waitState.lastTime);
+      var base = list.length ? list[list.length - 1].at : null;
+      if (base && term && !noMore) {
+        for (var k = 1; list.length < 6; k++) {
+          var t = base + k * term * 60000;
+          if (t - Date.now() > CHOICE_AHEAD_MIN * 60000) break;
+          if (lastAt && t > lastAt + 5 * 60000) { waitState.afterLast = true; break; } // 막차 시각이 지나면 그만
+          list.push({ at: t, live: false });
+        }
+      }
+      list.forEach(function (c, i) { c.n = i + 1; });
+      return list;
+    }
+
+    // "23:50" → 오늘(또는 새벽이면 내일) 그 시각의 ms
+    function lastBusTime(text) {
+      var m = /^(\d{1,2}):(\d{2})$/.exec(text || '');
+      if (!m) return null;
+      var d = new Date();
+      d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      if (Number(m[1]) < 4) d.setDate(d.getDate() + (new Date().getHours() >= 4 ? 1 : 0)); // 새벽 막차
+      return d.getTime();
+    }
+
+    function freeMinutesAt(at) {
+      return Math.floor((at - Date.now()) / 60000) - BUFFER_MIN;
+    }
+
+    function chooseCandidate(c) {
+      waitState.chosen = c;
+      waitState.endAt = c.at;
+      waitState.manual = false;
+      waitSlider.value = Math.min(60, Math.max(3, freeMinutesAt(c.at)));
+      renderBusChoice();
+    }
+
+    // 새 도착 정보로 후보를 다시 만들고, 고른 버스와 시각이 가장 가까운 걸 다시 골라요 (두 번째 버스가 첫 번째가 되는 등)
+    function refreshCandidates() {
+      var prevAt = waitState.chosen ? waitState.chosen.at : null;
+      waitState.candidates = buildCandidates(waitState.bus);
+      if (!waitState.candidates.length) return;
+      var best = waitState.candidates[0];
+      if (prevAt) {
+        waitState.candidates.forEach(function (c) { if (Math.abs(c.at - prevAt) < Math.abs(best.at - prevAt)) best = c; });
+      }
+      chooseCandidate(best);
+    }
+
+    // 슬라이더 "N분 다녀오고 싶어" → 그만큼 다녀올 수 있는 가장 빠른 버스
+    function pickBusForMinutes(minutes) {
+      var c = waitState.candidates.filter(function (x) { return freeMinutesAt(x.at) >= minutes; })[0];
+      wmHint.hidden = false;
+      if (c) {
+        chooseCandidate(c);
+        wmHint.textContent = minutes + '분 다녀오기 → ' + ORDINALS[c.n - 1] + ' 버스(' + (c.live ? '' : '약 ') +
+          Math.max(0, Math.round((c.at - Date.now()) / 60000)) + '분 후)를 타면 돼요 · 다녀올 시간 ' + freeMinutesAt(c.at) + '분';
+      } else {
+        var last = waitState.candidates[waitState.candidates.length - 1];
+        chooseCandidate(last);
+        wmHint.textContent = minutes + '분 뒤에 탈 수 있는 버스를 찾지 못해서 가장 늦은 ' + ORDINALS[last.n - 1] + ' 버스로 골랐어요' +
+          (waitState.afterLast ? ' (막차 이후)' : '');
+      }
+      tickWait(true);
+    }
+
+    function renderBusChoice() {
+      if (!waitState || !waitState.candidates || !waitState.candidates.length) return;
+      bcList.innerHTML = '';
+      waitState.candidates.forEach(function (c) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'bc-row' + (waitState.chosen && waitState.chosen.at === c.at ? ' on' : '');
+        var radio = document.createElement('span');
+        radio.className = 'bc-radio';
+        row.appendChild(radio);
+        var main = document.createElement('div');
+        main.className = 'bc-main';
+        var name = document.createElement('div');
+        name.className = 'bc-name';
+        name.textContent = ORDINALS[c.n - 1] + ' 버스';
+        if (!c.live) {
+          var est = document.createElement('span');
+          est.className = 'bc-est';
+          est.textContent = '어림';
+          name.appendChild(est);
+        }
+        main.appendChild(name);
+        var mins = Math.max(0, Math.round((c.at - Date.now()) / 60000));
+        addLine(main, 'bc-when', (c.live ? '' : '약 ') + (mins === 0 ? '곧 도착' : mins + '분 후') + ' · ' + clockText(c.at));
+        row.appendChild(main);
+        var free = freeMinutesAt(c.at);
+        addLine(row, 'bc-free' + (free <= 0 ? ' none' : ''), free <= 0 ? '다녀올 시간 없음' : '다녀올 ' + free + '분');
+        row.addEventListener('click', function () {
+          wmHint.hidden = true;
+          chooseCandidate(c);
+          tickWait(true);
+        });
+        bcList.appendChild(row);
+      });
+      var notes = [];
+      if (waitState.candidates.some(function (c) { return !c.live; }) && waitState.term) {
+        notes.push('"어림" 버스는 배차 ' + waitState.term + '분으로 어림한 시간이에요. 앞 버스가 지나가면 실시간으로 바뀌어요.');
+      } else if (!waitState.term) {
+        notes.push('배차 정보를 확인하는 중이거나 없어서 실시간 버스만 보여요.');
+      }
+      if (waitState.lastTime) notes.push('막차 ' + waitState.lastTime + (waitState.afterLast ? ' · 이 뒤로는 버스가 없어요' : ''));
+      bcNote.textContent = notes.join(' ');
+    }
+
     // 도착 정보 → 도착 시각 (지금 오고 있지 않으면 null)
     function arrivalTime(arr) {
       if (arr.status === 'running') return Date.now() + (arr.minutes * 60 + (arr.seconds || 0)) * 1000;
@@ -1980,6 +2183,11 @@
       if (!same) return;
       waitState.bus = same;
       waitState.liveEndAt = arrivalTime(same.arr1 || {});
+      if (waitState.candidates && waitState.candidates.length) { // 탈 버스를 골라 둔 상태면 새 정보로 다시 맞춰요
+        refreshCandidates();
+        tickWait(true);
+        return;
+      }
       if (!waitState.manual && waitState.liveEndAt) waitState.endAt = waitState.liveEndAt;
       if (waitState.manual && waitState.liveEndAt) waitLiveButton.hidden = false;
       tickWait(true);
@@ -1992,7 +2200,11 @@
       var leftSec = Math.max(0, Math.round((waitState.endAt - Date.now()) / 1000));
       var freeMin = Math.floor(leftSec / 60) - BUFFER_MIN; // 다녀올 수 있는 시간 (분)
 
-      if (!waitState.manual) {
+      if (waitState.chosen) {
+        waitClockLabel.textContent = ORDINALS[waitState.chosen.n - 1] + ' 버스까지' + (waitState.chosen.live ? '' : ' (어림)');
+        waitBig.textContent = Math.floor(leftSec / 60) + '분';
+        waitSec.textContent = (leftSec % 60) + '초';
+      } else if (!waitState.manual) {
         waitClockLabel.textContent = '버스 오기까지';
         waitBig.textContent = Math.floor(leftSec / 60) + '분';
         waitSec.textContent = (leftSec % 60) + '초';
@@ -2011,6 +2223,7 @@
 
       if (!force && freeMin === waitState.lastMinute) return;
       waitState.lastMinute = freeMin;
+      renderBusChoice();
       if (!waitState.manual) waitSlider.value = Math.min(60, Math.max(3, freeMin));
 
       // 처음이거나 시간이 늘어나서 더 멀리 찾아야 하면 다시 검색, 아니면 있는 결과에서 거르기만
